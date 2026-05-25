@@ -1,0 +1,413 @@
+#!/usr/bin/env bash
+# bin/wifi — punto de entrada único de wifi-setup
+# Uso desde el repo : sudo ./bin/wifi <comando> [args]
+# Uso tras instalar : sudo wifi <comando> [args]
+set -Eeuo pipefail
+IFS=$'\n\t'
+
+# ---------------------------------------------------------------------------
+# Resolver raíz del proyecto
+# — desde el repo local: bin/ está junto a lib/ y scripts/
+# — tras instalar     : vive en /opt/wifi-setup/bin/
+# ---------------------------------------------------------------------------
+_SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+if [[ -f "${_SELF_DIR}/../lib/common.sh" ]]; then
+    PROJECT_ROOT="$(cd "${_SELF_DIR}/.." && pwd)"
+else
+    PROJECT_ROOT="/opt/wifi-setup"
+fi
+
+LIB_DIR="${PROJECT_ROOT}/lib"
+SCRIPTS_DIR="${PROJECT_ROOT}"
+
+# ---------------------------------------------------------------------------
+# Colores mínimos (antes de sourcer common.sh)
+# ---------------------------------------------------------------------------
+if [[ -t 1 ]]; then
+    _B='\033[1m'; _C='\033[0;36m'; _G='\033[0;32m'
+    _Y='\033[1;33m'; _R='\033[0;31m'; _X='\033[0m'
+else
+    _B=''; _C=''; _G=''; _Y=''; _R=''; _X=''
+fi
+
+_die()  { echo -e "${_R}error: $*${_X}" >&2; exit 1; }
+
+_require_root() {
+    [[ "${EUID}" -eq 0 ]] \
+        || _die "requiere root — ejecuta: sudo wifi $*"
+}
+
+# Source common.sh para tener log(), die(), validate_interface(), etc.
+# Solo si existe (no requerido para help/version antes de instalar)
+_source_common() {
+    [[ -f "${LIB_DIR}/common.sh" ]] \
+        && source "${LIB_DIR}/common.sh" \
+        || _die "lib/common.sh no encontrado en ${LIB_DIR}"
+}
+
+# ---------------------------------------------------------------------------
+# cmd: install
+# ---------------------------------------------------------------------------
+_cmd_install() {
+    _require_root "install"
+    exec bash "${SCRIPTS_DIR}/install.sh" "$@"
+}
+
+# ---------------------------------------------------------------------------
+# cmd: uninstall
+# ---------------------------------------------------------------------------
+_cmd_uninstall() {
+    _require_root "uninstall"
+    exec bash "${SCRIPTS_DIR}/uninstall.sh" "$@"
+}
+
+# ---------------------------------------------------------------------------
+# cmd: check
+# ---------------------------------------------------------------------------
+_cmd_check() {
+    _require_root "check"
+    local mode="${1:-}"
+    if [[ -z "${mode}" ]]; then
+        local state="/opt/wifi-setup/state/install.state"
+        [[ -f "${state}" ]] \
+            || _die "no hay instalación activa — especifica modo: wifi check <server|client>"
+        # shellcheck source=/dev/null
+        source "${state}"
+        mode="${INSTALL_MODE}"
+    fi
+    exec bash "${SCRIPTS_DIR}/checks.sh" "${mode}"
+}
+
+# ---------------------------------------------------------------------------
+# cmd: status
+# ---------------------------------------------------------------------------
+_cmd_status() {
+    _source_common
+
+    echo -e "${_B}── Interfaces ──────────────────────────${_X}"
+    ip addr show | grep -E '^[0-9]+:|inet ' | grep -v '127.0.0.1'
+
+    echo ""
+    echo -e "${_B}── Rutas ───────────────────────────────${_X}"
+    ip route show
+
+    echo ""
+    echo -e "${_B}── WiFi (nmcli) ────────────────────────${_X}"
+    nmcli device status 2>/dev/null || echo "nmcli no disponible"
+
+    echo ""
+    echo -e "${_B}── Conectividad ────────────────────────${_X}"
+    if ping -c1 -W2 1.1.1.1 >/dev/null 2>&1; then
+        echo -e "${_G}  internet: OK${_X}"
+    else
+        echo -e "${_R}  internet: SIN CONECTIVIDAD${_X}"
+    fi
+
+    echo ""
+    echo -e "${_B}── Tailscale ───────────────────────────${_X}"
+    tailscale status 2>/dev/null || echo "tailscale no activo"
+}
+
+# ---------------------------------------------------------------------------
+# cmd: list
+# ---------------------------------------------------------------------------
+_cmd_list() {
+    _source_common
+    nmcli -t -f SSID,SIGNAL,SECURITY dev wifi list 2>/dev/null \
+        || {
+            log "WARN" "nmcli no disponible — usando iw"
+            iw dev 2>/dev/null \
+                | grep -oP '(?<=Interface )\S+' \
+                | head -1 \
+                | xargs -I{} iw dev {} scan 2>/dev/null \
+                | grep 'SSID:' || true
+        }
+}
+
+# ---------------------------------------------------------------------------
+# cmd: passwd
+# ---------------------------------------------------------------------------
+_cmd_passwd() {
+    _require_root "passwd"
+    _source_common
+
+    local iface="${1:-}"
+    [[ -n "${iface}" ]] \
+        || _die "debes indicar la interfaz — uso: sudo wifi passwd <interfaz>"
+
+    validate_interface "${iface}"
+
+    local conf="${CONFIG_DIR}/${iface}.conf"
+    [[ -f "${conf}" ]] \
+        || _die "no existe configuración para '${iface}' en ${conf}"
+
+    backup_file "${conf}"
+    cp -f "${conf}" "${conf}.rollback"
+
+    local passwd
+    while true; do
+        read -r -s -p "nueva contraseña (mín 8 chars): " passwd || true
+        echo
+        [[ "${#passwd}" -ge 8 ]] && break
+        echo "error: mínimo 8 caracteres" >&2
+    done
+
+    local ssid psk_line
+    ssid="$(grep -oP '(?<=ssid=")[^"]+' "${conf}")"
+    psk_line="$(wpa_passphrase "${ssid}" "${passwd}" 2>/dev/null \
+        | grep -E '^\s+psk=' | grep -v '#' | tr -d '\t ' || true)"
+    [[ -n "${psk_line}" ]] || _die "wpa_passphrase no generó PSK — verifica la contraseña"
+
+    cat > "${conf}" <<EOF
+network={
+    ssid="${ssid}"
+    ${psk_line}
+}
+EOF
+    chmod 600 "${conf}"
+    unset passwd
+
+    log "INFO" "password updated for ssid '${ssid}' on ${iface}"
+
+    if ! ping -c1 -W3 1.1.1.1 >/dev/null 2>&1; then
+        log "WARN" "connectivity check failed — rolling back ${iface} config"
+        rollback_network "${conf}.rollback" "${conf}"
+        _die "sin conectividad tras el cambio — config restaurada"
+    fi
+
+    log "INFO" "connectivity OK"
+    echo "ok: contraseña actualizada y conectividad verificada"
+}
+
+# ---------------------------------------------------------------------------
+# cmd: showpass
+# ---------------------------------------------------------------------------
+_cmd_showpass() {
+    _require_root "showpass"
+    _source_common
+
+    local iface="${1:-}"
+    [[ -n "${iface}" ]] \
+        || _die "debes indicar la interfaz — uso: sudo wifi showpass <interfaz>"
+
+    validate_interface "${iface}"
+
+    local conf="${CONFIG_DIR}/${iface}.conf"
+    [[ -f "${conf}" ]] \
+        || _die "no existe configuración para '${iface}'"
+
+    local ssid nm_psk
+    ssid="$(grep -oP '(?<=ssid=")[^"]+' "${conf}")"
+    nm_psk="$(nmcli --show-secrets -g 802-11-wireless-security.psk \
+        connection show "${ssid}" 2>/dev/null || true)"
+
+    if [[ -n "${nm_psk}" ]]; then
+        echo "ssid    : ${ssid}"
+        echo "password: ${nm_psk}"
+        log "INFO" "plaintext password displayed for ssid '${ssid}' on ${iface}"
+    else
+        local psk_hash
+        psk_hash="$(grep -oP '(?<=psk=)[^\s]+' "${conf}" || true)"
+        echo "ssid    : ${ssid}"
+        echo "psk     : ${psk_hash} (hash — no reversible)"
+        echo "nota    : para ver la contraseña original usa nmcli con el agente activo"
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# cmd: panic
+# ---------------------------------------------------------------------------
+_cmd_panic() {
+    _require_root "panic"
+    _source_common
+
+    log "INFO" "wifi panic: iniciando recuperación de red..."
+
+    local state="/opt/wifi-setup/state/install.state"
+    [[ -f "${state}" ]] && source "${state}"
+
+    systemctl daemon-reload || true
+
+    local found=0
+    for iface_path in /sys/class/net/wl* /sys/class/net/wlan*; do
+        [[ -e "${iface_path}" ]] || continue
+        local iface="${iface_path##*/}"
+
+        log "INFO" "recuperando interfaz ${iface}..."
+        ip link set "${iface}" down 2>/dev/null || true
+        sleep 1
+        ip link set "${iface}" up 2>/dev/null \
+            || log "WARN" "no se pudo levantar ${iface}"
+        sleep 1
+
+        if [[ -f "/etc/wpa_supplicant/wpa_supplicant-${iface}.conf" ]]; then
+            systemctl restart "wpa_supplicant@${iface}" 2>/dev/null \
+                || log "WARN" "no se pudo reiniciar wpa_supplicant@${iface}"
+            sleep 3
+        fi
+
+        dhclient -v "${iface}" 2>/dev/null \
+            || log "WARN" "dhclient falló en ${iface}"
+        found=1
+    done
+
+    if [[ "${INSTALL_MODE:-}" == "server" ]]; then
+        log "INFO" "restaurando forwarding (modo servidor)..."
+        systemctl restart wifi-setup-forward 2>/dev/null \
+            || log "WARN" "no se pudo reiniciar wifi-setup-forward"
+    fi
+
+    if [[ "${found}" -eq 0 ]]; then
+        log "WARN" "no se encontraron interfaces wireless"
+        echo "warn: no se encontraron interfaces wireless — verifica: ip link show" >&2
+        exit 1
+    fi
+
+    log "INFO" "wifi panic: recuperación completada"
+}
+
+
+# ---------------------------------------------------------------------------
+# cmd: setip  — cambiar IP upstream manualmente sin reinstalar
+# ---------------------------------------------------------------------------
+_cmd_setip() {
+    _require_root "setip"
+    _source_common
+    source "${LIB_DIR}/forward.sh"
+    source "${LIB_DIR}/net.sh"
+
+    local iface="${1:-}"
+
+    if [[ -z "${iface}" ]]; then
+        echo "uso: sudo wifi setip <interfaz>"
+        echo "     sudo wifi setip wlx088af12a8315"
+        echo ""
+        echo "Reaplica el setup dhcpcd y renueva el lease. La IP la asigna el AP;"
+        echo "La IP la asigna el AP. La MAC persistente no cambia."
+        exit 1
+    fi
+
+    validate_interface "${iface}"
+
+    local state="/opt/wifi-setup/state/install.state"
+    [[ -f "${state}" ]] && source "${state}"
+
+    # Modelo dhcpcd: la IP la asigna el AP. 'setip' reaplica el setup
+    # (MAC .link + dhcpcd) y renueva el lease.
+    source "${LIB_DIR}/forward.sh"
+    setup_upstream_dhcpcd "${iface}" "${CHOSEN_MAC:-}"
+    dhcpcd -n "${iface}" 2>/dev/null || true
+    sleep 5
+
+    show_upstream_config "${iface}"
+    log "INFO" "upstream ${iface} reconfigurado vía dhcpcd (IP del AP)"
+    echo "ok: lease renovado. La IP la asigna el AP."
+}
+
+# ---------------------------------------------------------------------------
+# cmd: showmac  — mostrar MAC persistente generada
+# ---------------------------------------------------------------------------
+_cmd_showmac() {
+    _source_common
+    source "${LIB_DIR}/forward.sh"
+
+    local iface="${1:-}"
+    [[ -n "${iface}" ]] || { echo "uso: wifi showmac <interfaz>"; exit 1; }
+
+    show_upstream_config "${iface}"
+}
+
+# ---------------------------------------------------------------------------
+# cmd: setmac  — cambiar MAC en caliente, persistente, con auto-rollback
+# ---------------------------------------------------------------------------
+_cmd_setmac() {
+    _require_root "setmac"
+    _source_common
+    source "${LIB_DIR}/forward.sh"
+
+    local iface="${1:-}"
+    local mac_arg="${2:-}"
+
+    if [[ -z "${iface}" ]] || [[ -z "${mac_arg}" ]]; then
+        echo "uso: sudo wifi setmac <interfaz> <mac|random>"
+        echo "     sudo wifi setmac wlan1 00:1A:A0:3F:2B:1C   # MAC específica"
+        echo "     sudo wifi setmac wlan1 random              # nueva Windows-like"
+        echo ""
+        echo "Cambia la MAC al instante, la persiste en el .network y verifica"
+        echo "internet; si falla, revierte automáticamente a la MAC anterior."
+        exit 1
+    fi
+
+    validate_interface "${iface}"
+    set_mac_hot "${iface}" "${mac_arg}"
+}
+
+# ---------------------------------------------------------------------------
+# cmd: version
+# ---------------------------------------------------------------------------
+_cmd_version() {
+    echo "wifi-setup 1.0.0"
+}
+
+# ---------------------------------------------------------------------------
+# cmd: help
+# ---------------------------------------------------------------------------
+_cmd_help() {
+    echo -e "
+${_B}${_C}  wifi-setup${_X} — gestión de red WiFi para servidor/cliente
+
+${_B}uso:${_X}
+  sudo wifi install          instalar o actualizar (interactivo)
+  sudo wifi uninstall        desinstalar completamente
+  sudo wifi check            verificar estado de la instalación
+  sudo wifi check <modo>     verificar modo específico: server | client
+
+  wifi status                interfaces, rutas, conectividad, Tailscale
+  wifi list                  redes WiFi visibles
+
+  sudo wifi passwd <iface>   cambiar contraseña WPA de una interfaz
+  sudo wifi showpass <iface> mostrar SSID y contraseña guardada
+  sudo wifi panic            recuperación de emergencia de red
+  sudo wifi setip <iface> <ip>  cambiar IP upstream manualmente
+  sudo wifi setmac <iface> <mac|random>  cambiar MAC en caliente (rollback auto)
+  wifi showmac <iface>       mostrar MAC persistente asignada
+
+  wifi version               versión instalada
+  wifi help                  esta ayuda
+
+${_B}ejemplos:${_X}
+  sudo wifi install
+  sudo wifi check
+  wifi status
+  sudo wifi panic
+  sudo wifi passwd wlan1
+"
+}
+
+# ---------------------------------------------------------------------------
+# Main dispatch
+# ---------------------------------------------------------------------------
+CMD="${1:-help}"
+shift || true
+
+case "${CMD}" in
+    install)             _cmd_install   "$@" ;;
+    uninstall|remove)    _cmd_uninstall "$@" ;;
+    check|verify)        _cmd_check     "$@" ;;
+    status)              _cmd_status        ;;
+    list)                _cmd_list          ;;
+    passwd|password)     _cmd_passwd    "$@" ;;
+    showpass|show-pass)  _cmd_showpass  "$@" ;;
+    panic)               _cmd_panic         ;;
+    setip)               _cmd_setip     "$@" ;;
+    setmac)              _cmd_setmac    "$@" ;;
+    showmac)             _cmd_showmac   "$@" ;;
+    version|-v|--version)_cmd_version       ;;
+    help|-h|--help)      _cmd_help          ;;
+    *)
+        echo -e "${_R}comando desconocido: '${CMD}'${_X}" >&2
+        _cmd_help
+        exit 1
+        ;;
+esac
