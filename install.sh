@@ -51,7 +51,7 @@ INSTALL_DIR="/opt/wifi-setup"
 
 # Auto-update: si corremos desde INSTALL_DIR, buscar repo fuente y sincronizar
 _REPO_SOURCE=""
-_candidate="${HOME}/scripts/wifi-setup"
+_candidate="${HOME}/unix-toolkit-tools/wifi-setup"
 if [[ "$(realpath "${SCRIPT_DIR}")" == "$(realpath "${INSTALL_DIR}")" ]]; then
     if [[ -d "${_candidate}" ]] && [[ -f "${_candidate}/install.sh" ]] &&        [[ "$(realpath "${_candidate}")" != "$(realpath "${INSTALL_DIR}")" ]]; then
         _REPO_SOURCE="${_candidate}"
