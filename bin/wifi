@@ -93,8 +93,8 @@ _cmd_status() {
     ip route show
 
     echo ""
-    echo -e "${_B}── WiFi (nmcli) ────────────────────────${_X}"
-    nmcli device status 2>/dev/null || echo "nmcli no disponible"
+    echo -e "${_B}── WiFi ────────────────────────────────${_X}"
+    iw dev 2>/dev/null || ip link show | grep -E '^[0-9]+.*wl'
 
     echo ""
     echo -e "${_B}── Conectividad ────────────────────────${_X}"
@@ -114,15 +114,11 @@ _cmd_status() {
 # ---------------------------------------------------------------------------
 _cmd_list() {
     _source_common
-    nmcli -t -f SSID,SIGNAL,SECURITY dev wifi list 2>/dev/null \
-        || {
-            log "WARN" "nmcli no disponible — usando iw"
-            iw dev 2>/dev/null \
-                | grep -oP '(?<=Interface )\S+' \
-                | head -1 \
-                | xargs -I{} iw dev {} scan 2>/dev/null \
-                | grep 'SSID:' || true
-        }
+    iw dev 2>/dev/null \
+        | grep -oP '(?<=Interface )\S+' \
+        | head -1 \
+        | xargs -I{} iw dev {} scan 2>/dev/null \
+        | grep 'SSID:' || true
 }
 
 # ---------------------------------------------------------------------------
@@ -138,9 +134,9 @@ _cmd_passwd() {
 
     validate_interface "${iface}"
 
-    local conf="${CONFIG_DIR}/${iface}.conf"
+    local conf="/etc/wpa_supplicant/wpa_supplicant-${iface}.conf"
     [[ -f "${conf}" ]] \
-        || _die "no existe configuración para '${iface}' en ${conf}"
+        || _die "no existe config wpa_supplicant para '${iface}': ${conf}"
 
     backup_file "${conf}"
     cp -f "${conf}" "${conf}.rollback"
@@ -154,25 +150,23 @@ _cmd_passwd() {
     done
 
     local ssid psk_line
-    ssid="$(grep -oP '(?<=ssid=")[^"]+' "${conf}")"
+    ssid="$(grep -oP '(?<=ssid=")[^"]+' "${conf}" | head -1)"
     psk_line="$(wpa_passphrase "${ssid}" "${passwd}" 2>/dev/null \
         | grep -E '^\s+psk=' | grep -v '#' | tr -d '\t ' || true)"
     [[ -n "${psk_line}" ]] || _die "wpa_passphrase no generó PSK — verifica la contraseña"
 
-    cat > "${conf}" <<EOF
-network={
-    ssid="${ssid}"
-    ${psk_line}
-}
-EOF
-    chmod 600 "${conf}"
     unset passwd
+    source "${LIB_DIR}/net.sh"
+    configure_wpa "${iface}" "${ssid}" "${psk_line}" ""
+    systemctl restart "wpa_supplicant@${iface}" 2>/dev/null || true
+    sleep 5
 
     log "INFO" "password updated for ssid '${ssid}' on ${iface}"
 
-    if ! ping -c1 -W3 1.1.1.1 >/dev/null 2>&1; then
+    if ! ping -c1 -W5 1.1.1.1 >/dev/null 2>&1; then
         log "WARN" "connectivity check failed — rolling back ${iface} config"
         rollback_network "${conf}.rollback" "${conf}"
+        systemctl restart "wpa_supplicant@${iface}" 2>/dev/null || true
         _die "sin conectividad tras el cambio — config restaurada"
     fi
 
@@ -247,8 +241,8 @@ _cmd_panic() {
             sleep 3
         fi
 
-        dhclient -v "${iface}" 2>/dev/null \
-            || log "WARN" "dhclient falló en ${iface}"
+        dhcpcd -n "${iface}" 2>/dev/null \
+            || log "WARN" "dhcpcd falló en ${iface}"
         found=1
     done
 
@@ -295,7 +289,6 @@ _cmd_setip() {
 
     # Modelo dhcpcd: la IP la asigna el AP. 'setip' reaplica el setup
     # (MAC .link + dhcpcd) y renueva el lease.
-    source "${LIB_DIR}/forward.sh"
     setup_upstream_dhcpcd "${iface}" "${CHOSEN_MAC:-}"
     dhcpcd -n "${iface}" 2>/dev/null || true
     sleep 5

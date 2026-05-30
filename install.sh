@@ -287,7 +287,7 @@ fi
 # --- Credenciales capturadas arriba; escribir config si aplica ---
 # Escribir config WiFi si vino credencial nueva y aún no existe el archivo
 if [[ -n "${WIFI_PSK_LINE}" ]] && [[ ! -f "${WPA_CONF}" ]]; then
-    WIFI_BSSID="$(iwconfig "${UPSTREAM_IFACE}" 2>/dev/null | awk "/Access Point/{print $6}" | grep -v Not)"
+    WIFI_BSSID="$(iw dev "${UPSTREAM_IFACE}" link 2>/dev/null | awk '/Connected to/{print $3}' || true)"
     configure_wpa "${UPSTREAM_IFACE}" "${WIFI_SSID}" "${WIFI_PSK_LINE}" "${WIFI_BSSID:-}"
 fi
 # Persistir la MAC elegida (fuente de verdad para la IP fija)

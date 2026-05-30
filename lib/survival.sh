@@ -13,13 +13,11 @@ SURVIVAL_FLAG="WIFI_SETUP_INWIN"
 # Instala byobu vía apt si ninguno está (Debian). Imprime el binario a usar.
 # ---------------------------------------------------------------------------
 _mux_bin() {
-    if command -v byobu >/dev/null 2>&1; then echo byobu; return 0; fi
-    if command -v tmux  >/dev/null 2>&1; then echo tmux;  return 0; fi
-    log "INFO" "instalando byobu (no hay multiplexor)..."
+    if command -v tmux >/dev/null 2>&1; then echo tmux; return 0; fi
+    log "INFO" "instalando tmux (no hay multiplexor)..."
     apt-get update -qq >/dev/null 2>&1 || true
-    apt-get install -y -qq byobu >/dev/null 2>&1 || apt-get install -y -qq tmux >/dev/null 2>&1
-    if command -v byobu >/dev/null 2>&1; then echo byobu; return 0; fi
-    if command -v tmux  >/dev/null 2>&1; then echo tmux;  return 0; fi
+    apt-get install -y -qq tmux >/dev/null 2>&1
+    command -v tmux >/dev/null 2>&1 && { echo tmux; return 0; }
     return 1
 }
 

@@ -362,7 +362,9 @@ set_mac_hot() {
         die "no se pudo aplicar la MAC en ${iface} (rollback hecho)"
     fi
     ip link set "${iface}" up
-    systemctl restart systemd-networkd 2>/dev/null || true
+    dhcpcd -k "${iface}" 2>/dev/null || true
+    sleep 1
+    dhcpcd "${iface}" 2>/dev/null || true
 
     # 5. Verificar conectividad; rollback si falla
     log "INFO" "verificando conectividad tras cambio de MAC (máx 25s)..."
