@@ -287,7 +287,9 @@ fi
 # --- Credenciales capturadas arriba; escribir config si aplica ---
 # Escribir config WiFi si vino credencial nueva y aún no existe el archivo
 if [[ -n "${WIFI_PSK_LINE}" ]] && [[ ! -f "${WPA_CONF}" ]]; then
-    WIFI_BSSID="$(iw dev "${UPSTREAM_IFACE}" link 2>/dev/null | awk '/Connected to/{print $3}' || true)"
+    # bssid NO auto-capturado: fijar el BSSID del AP actual rompe la reconexion
+    # cuando el mismo SSID/PSK llega de otro AP (otra MAC). WIFI_BSSID solo si
+    # se setea explicitamente en el entorno antes de instalar.
     configure_wpa "${UPSTREAM_IFACE}" "${WIFI_SSID}" "${WIFI_PSK_LINE}" "${WIFI_BSSID:-}"
 fi
 # Persistir la MAC elegida (fuente de verdad para la IP fija)
