@@ -81,6 +81,7 @@ purge_network_stack() {
     local services=(
         NetworkManager
         NetworkManager-wait-online
+        iwd
     )
 
     for svc in "${services[@]}"; do
