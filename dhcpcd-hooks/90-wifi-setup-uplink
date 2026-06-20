@@ -1,0 +1,10 @@
+# 90-wifi-setup-uplink -- dhcpcd hook: failover no-preemptivo via eventos de carrier.
+# Invocado por dhcpcd-run-hooks. Variables disponibles: $interface, $reason.
+# NOCARRIER_ROAMING se ignora a proposito: es reconexion momentanea (roaming),
+# no una caida real -- actuar aqui causaria falsos positivos de failover.
+
+if [ "${reason}" = "NOCARRIER" ]; then
+    if [ -x /opt/wifi-setup/bin/wifi ]; then
+        /opt/wifi-setup/bin/wifi uplink-event "${interface}" "${reason}" 2>>/opt/wifi-setup/logs/uplink-hook.log
+    fi
+fi

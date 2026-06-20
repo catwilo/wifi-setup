@@ -337,6 +337,61 @@ _cmd_setmac() {
 }
 
 # ---------------------------------------------------------------------------
+# cmd: uplink   definir PRIMARY/FALLBACK de internet (wifi vs lan-a-router)
+# ---------------------------------------------------------------------------
+_cmd_uplink() {
+    _require_root "uplink"
+    _source_common
+    source "${LIB_DIR}/uplink.sh"
+    source "${LIB_DIR}/detect.sh"
+
+    local role="${1:-}" iface="${2:-}"
+    if [[ -z "${role}" ]] || [[ -z "${iface}" ]]; then
+        echo "uso: sudo wifi uplink <primary|fallback> <iface>"
+        exit 1
+    fi
+
+    case "${role}" in
+        primary)
+            uplink_load 2>/dev/null || true
+            uplink_set_roles "${iface}" "${UPLINK_FALLBACK:-${iface}}"
+            ;;
+        fallback)
+            uplink_load 2>/dev/null || true
+            uplink_set_roles "${UPLINK_PRIMARY:-${iface}}" "${iface}"
+            ;;
+        *)
+            _die "rol invalido: '${role}' (usa primary|fallback)"
+            ;;
+    esac
+}
+
+# ---------------------------------------------------------------------------
+# cmd: uplink-event   invocado por el hook dhcpcd (no para uso manual)
+# ---------------------------------------------------------------------------
+_cmd_uplink_event() {
+    _require_root "uplink-event"
+    _source_common
+    source "${LIB_DIR}/uplink.sh"
+    source "${LIB_DIR}/detect.sh"
+
+    local iface="${1:-}" reason="${2:-}"
+    [[ -n "${iface}" ]] && [[ -n "${reason}" ]] \
+        || _die "uso interno: wifi uplink-event <iface> <reason>"
+
+    uplink_on_carrier_event "${iface}" "${reason}"
+}
+
+# ---------------------------------------------------------------------------
+# cmd: uplink-status
+# ---------------------------------------------------------------------------
+_cmd_uplink_status() {
+    _source_common
+    source "${LIB_DIR}/uplink.sh"
+    uplink_status
+}
+
+# ---------------------------------------------------------------------------
 # cmd: version
 # ---------------------------------------------------------------------------
 _cmd_version() {
@@ -365,6 +420,10 @@ ${_B}uso:${_X}
   sudo wifi setip <iface> <ip>  cambiar IP upstream manualmente
   sudo wifi setmac <iface> <mac|random>  cambiar MAC en caliente (rollback auto)
   wifi showmac <iface>       mostrar MAC persistente asignada
+
+  sudo wifi uplink primary <iface>   definir interfaz PRIMARY de internet
+  sudo wifi uplink fallback <iface>  definir interfaz FALLBACK de internet
+  wifi uplink-status         ver PRIMARY/FALLBACK/activo actual
 
   wifi version               versión instalada
   wifi help                  esta ayuda
@@ -396,6 +455,9 @@ case "${CMD}" in
     setip)               _cmd_setip     "$@" ;;
     setmac)              _cmd_setmac    "$@" ;;
     showmac)             _cmd_showmac   "$@" ;;
+    uplink)              _cmd_uplink       "$@" ;;
+    uplink-event)        _cmd_uplink_event "$@" ;;
+    uplink-status)       _cmd_uplink_status     ;;
     version|-v|--version)_cmd_version       ;;
     help|-h|--help)      _cmd_help          ;;
     *)
