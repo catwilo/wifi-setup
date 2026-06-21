@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# lib/net.sh — detección de interfaces y limpieza de stack de red previo
+# lib/net.sh  deteccin de interfaces y limpieza de stack de red previo
 
 # ---------------------------------------------------------------------------
 # Detectar todas las interfaces WiFi disponibles
@@ -11,7 +11,6 @@ detect_wifi_interfaces() {
         [[ -e "${p}" ]] || continue
         ifaces+=("${p##*/}")
     done
-    # deduplicar
     printf '%s\n' "${ifaces[@]}" | sort -u
 }
 
@@ -39,12 +38,10 @@ detect_plan_interface() {
     for p in /sys/class/net/e*; do
         [[ -e "${p}" ]] || continue
         local iface="${p##*/}"
-        # excluir virtuales conocidos
         [[ "${iface}" =~ ^(lo|docker|virbr|veth|br-) ]] && continue
         echo "${iface}"
         return 0
     done
-    # fallback: cualquier no-lo no-wl
     for p in /sys/class/net/*; do
         [[ -e "${p}" ]] || continue
         local iface="${p##*/}"
@@ -58,7 +55,7 @@ detect_plan_interface() {
 }
 
 # ---------------------------------------------------------------------------
-# Detectar qué stack de red está activo
+# Detectar qu stack de red est activo
 # ---------------------------------------------------------------------------
 detect_network_stack() {
     local stacks=()
@@ -71,13 +68,10 @@ detect_network_stack() {
 
 # ---------------------------------------------------------------------------
 # Limpiar stack previo de forma segura
-# Detiene y deshabilita todo lo que pueda interferir
 # ---------------------------------------------------------------------------
 purge_network_stack() {
     log "INFO" "detectando y limpiando stack de red previo..."
 
-    # NOTA: dhcpcd NO se enmascara — es el gestor del upstream USB en el
-    # modelo dhcpcd. systemd-networkd se conserva para el plan (enp4s0).
     local services=(
         NetworkManager
         NetworkManager-wait-online
@@ -96,8 +90,6 @@ purge_network_stack() {
         fi
     done
 
-    # NO matar dhcpcd: es el gestor del upstream en el modelo nuevo. Solo
-    # liberar leases viejos para evitar IPs duplicadas; dhcpcd repedirá limpio.
     if pgrep -x dhcpcd >/dev/null 2>&1; then
         log "INFO" "liberando leases dhcpcd previos (evita IPs duplicadas)..."
         dhcpcd -k 2>/dev/null || true
@@ -109,13 +101,11 @@ purge_network_stack() {
         sleep 1
     fi
 
-    # Limpiar leases DHCP viejos
     rm -f /var/lib/dhcp/dhclient*.leases 2>/dev/null || true
     rm -f /var/lib/dhcpcd/*.lease 2>/dev/null || true
 
-    # Limpiar configs NetworkManager antiguas (preservar solo lo de este proyecto)
     if [[ -d /etc/NetworkManager/system-connections ]]; then
-        log "INFO" "backup de conexiones NM previas → ${STATE_DIR}/nm-connections.bak/"
+        log "INFO" "backup de conexiones NM previas  ${STATE_DIR}/nm-connections.bak/"
         mkdir -p "${STATE_DIR}/nm-connections.bak"
         cp -a /etc/NetworkManager/system-connections/. "${STATE_DIR}/nm-connections.bak/" 2>/dev/null || true
         rm -f /etc/NetworkManager/system-connections/*.nmconnection 2>/dev/null || true
@@ -125,21 +115,63 @@ purge_network_stack() {
 }
 
 # ---------------------------------------------------------------------------
-# Configurar wpa_supplicant para una interfaz
+# Helpers internos: bloques network={} dentro de un wpa_supplicant-<iface>.conf
+# Cada bloque se identifica por su linea ssid="...". KISS: texto plano, sin
+# parser real -- suficiente porque el formato lo generamos nosotros mismos.
 # ---------------------------------------------------------------------------
-configure_wpa() {
-    local iface="$1" ssid="$2" psk_line="$3" bssid="${4:-}"
-    local wpa_conf="/etc/wpa_supplicant/wpa_supplicant-${iface}.conf"
+_wpa_conf_path() {
+    echo "/etc/wpa_supplicant/wpa_supplicant-$1.conf"
+}
 
-    backup_file "${wpa_conf}"
-
-    cat > "${wpa_conf}" <<EOF
+_wpa_conf_header() {
+    cat <<'EOF'
 ctrl_interface=DIR=/var/run/wpa_supplicant GROUP=netdev
 update_config=1
 country=US
 bgscan=""
 scan_cur_freq=1
+EOF
+}
 
+# wpa_network_exists <iface> <ssid>  ->  0 si ya hay un bloque para ese ssid
+wpa_network_exists() {
+    local iface="$1" ssid="$2" conf
+    conf="$(_wpa_conf_path "${iface}")"
+    [[ -f "${conf}" ]] || return 1
+    grep -q "ssid=\"${ssid}\"" "${conf}"
+}
+
+# _wpa_extract_other_blocks <conf> <ssid_to_exclude>
+# Imprime todos los bloques network={} cuyo ssid NO sea el indicado.
+_wpa_extract_other_blocks() {
+    local conf="$1" exclude_ssid="$2"
+    [[ -f "${conf}" ]] || return 0
+    awk -v exclude="ssid=\"${exclude_ssid}\"" '
+        /^network=\{/ { buf=$0 "\n"; in_block=1; skip=0; next }
+        in_block {
+            buf = buf $0 "\n"
+            if ($0 ~ exclude) skip=1
+            if ($0 ~ /^\}/) {
+                if (!skip) printf "%s", buf
+                in_block=0; buf=""
+            }
+            next
+        }
+    ' "${conf}"
+}
+
+# configure_wpa <iface> <ssid> <psk_line> <bssid>
+# Crea el archivo si no existe. Si existe, preserva todos los demas bloques
+# network={} y solo reemplaza (o agrega) el del ssid dado.
+configure_wpa() {
+    local iface="$1" ssid="$2" psk_line="$3" bssid="${4:-}"
+    local conf
+    conf="$(_wpa_conf_path "${iface}")"
+
+    backup_file "${conf}"
+
+    local new_block
+    new_block="$(cat <<EOF
 network={
     ssid="${ssid}"
     ${bssid:+bssid=${bssid}}
@@ -151,8 +183,117 @@ network={
     priority=10
 }
 EOF
-    chmod 600 "${wpa_conf}"
-    log "INFO" "wpa_supplicant config escrita: ${wpa_conf}"
+)"
+
+    {
+        _wpa_conf_header
+        echo ""
+        if [[ -f "${conf}" ]]; then
+            _wpa_extract_other_blocks "${conf}" "${ssid}"
+        fi
+        echo "${new_block}"
+    } > "${conf}.new"
+
+    chmod 600 "${conf}.new"
+    mv -f "${conf}.new" "${conf}"
+    log "INFO" "wpa_supplicant config actualizada (red '${ssid}'): ${conf}"
+}
+
+# remove_wpa_network <iface> <ssid>  -- borra solo ese bloque, preserva el resto
+remove_wpa_network() {
+    local iface="$1" ssid="$2" conf
+    conf="$(_wpa_conf_path "${iface}")"
+    [[ -f "${conf}" ]] || { log "WARN" "no existe config para ${iface}"; return 1; }
+    wpa_network_exists "${iface}" "${ssid}" || { log "WARN" "ssid '${ssid}' no estaba en ${conf}"; return 1; }
+
+    backup_file "${conf}"
+    {
+        _wpa_conf_header
+        echo ""
+        _wpa_extract_other_blocks "${conf}" "${ssid}"
+    } > "${conf}.new"
+    chmod 600 "${conf}.new"
+    mv -f "${conf}.new" "${conf}"
+    log "INFO" "red '${ssid}' eliminada de ${conf}"
+}
+
+# set_wpa_disabled <iface> <ssid> <on|off>
+# on = permitir autoconnect (quita disabled=1). off = deshabilitar (agrega disabled=1).
+set_wpa_disabled() {
+    local iface="$1" ssid="$2" mode="$3" conf
+    conf="$(_wpa_conf_path "${iface}")"
+    wpa_network_exists "${iface}" "${ssid}" \
+        || { log "ERROR" "ssid '${ssid}' no encontrado en ${conf}"; return 1; }
+
+    backup_file "${conf}"
+
+    case "${mode}" in
+        off)
+            awk -v target="ssid=\"${ssid}\"" '
+                /^network=\{/ { print; in_block=1; matched=0; next }
+                in_block && $0 ~ target { matched=1; print; next }
+                in_block && /^\}/ {
+                    if (matched) print "    disabled=1"
+                    print; in_block=0; next
+                }
+                { print }
+            ' "${conf}" > "${conf}.new"
+            ;;
+        on)
+            awk -v target="ssid=\"${ssid}\"" '
+                /^network=\{/ { print; in_block=1; matched=0; next }
+                in_block && $0 ~ target { matched=1; print; next }
+                in_block && matched && /disabled=1/ { next }
+                in_block && /^\}/ { print; in_block=0; next }
+                { print }
+            ' "${conf}" > "${conf}.new"
+            ;;
+        *)
+            log "ERROR" "modo invalido: ${mode} (usa on|off)"; return 1 ;;
+    esac
+
+    chmod 600 "${conf}.new"
+    mv -f "${conf}.new" "${conf}"
+    log "INFO" "autoconnect '${ssid}' -> ${mode}"
+}
+
+# set_wpa_freqlist <iface> <ssid> <freq_list_string>
+# freq_list_string: frecuencias separadas por espacio, ej "2412 2417 2422"
+set_wpa_freqlist() {
+    local iface="$1" ssid="$2" freqs="$3" conf
+    conf="$(_wpa_conf_path "${iface}")"
+    wpa_network_exists "${iface}" "${ssid}" \
+        || { log "ERROR" "ssid '${ssid}' no encontrado en ${conf}"; return 1; }
+
+    backup_file "${conf}"
+    awk -v target="ssid=\"${ssid}\"" -v freqs="${freqs}" '
+        /^network=\{/ { print; in_block=1; matched=0; next }
+        in_block && $0 ~ target { matched=1; print; next }
+        in_block && matched && /freq_list=/ { next }
+        in_block && matched && /^\}/ {
+            print "    freq_list=" freqs
+            print; in_block=0; next
+        }
+        in_block && /^\}/ { print; in_block=0; next }
+        { print }
+    ' "${conf}" > "${conf}.new"
+
+    chmod 600 "${conf}.new"
+    mv -f "${conf}.new" "${conf}"
+    log "INFO" "freq_list de '${ssid}' -> ${freqs}"
+}
+
+# scan_ssid_frequencies <iface> <ssid>
+# Escanea e imprime, separadas por espacio, las frecuencias (MHz) vistas
+# para ese ssid exacto. Vacio si no se vio nada.
+scan_ssid_frequencies() {
+    local iface="$1" ssid="$2"
+    iw dev "${iface}" scan 2>/dev/null \
+        | awk -v target="SSID: ${ssid}" '
+            /^BSS / { freq="" }
+            /freq:/ { freq=$2 }
+            $0 ~ target && freq != "" { print freq; freq="" }
+        ' | sort -u | tr '\n' ' ' | sed 's/ $//'
 }
 
 # ---------------------------------------------------------------------------
@@ -165,9 +306,9 @@ enable_wpa_service() {
     systemctl restart "wpa_supplicant@${iface}.service"
     sleep 2
     if ! systemctl is-active "wpa_supplicant@${iface}.service" >/dev/null 2>&1; then
-        log "ERROR" "wpa_supplicant@${iface} no arrancó"
+        log "ERROR" "wpa_supplicant@${iface} no arranc"
         journalctl -u "wpa_supplicant@${iface}.service" -n 20 --no-pager >&2
-        die "fallo en wpa_supplicant — revisa el log anterior para el detalle exacto"
+        die "fallo en wpa_supplicant  revisa el log anterior para el detalle exacto"
     fi
     log "INFO" "wpa_supplicant@${iface} activo y persistente"
 }

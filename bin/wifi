@@ -1,15 +1,10 @@
 #!/usr/bin/env bash
-# bin/wifi — punto de entrada único de wifi-setup
+# bin/wifi  punto de entrada nico de wifi-setup
 # Uso desde el repo : sudo ./bin/wifi <comando> [args]
 # Uso tras instalar : sudo wifi <comando> [args]
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-# ---------------------------------------------------------------------------
-# Resolver raíz del proyecto
-# — desde el repo local: bin/ está junto a lib/ y scripts/
-# — tras instalar     : vive en /opt/wifi-setup/bin/
-# ---------------------------------------------------------------------------
 _SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 if [[ -f "${_SELF_DIR}/../lib/common.sh" ]]; then
@@ -21,9 +16,6 @@ fi
 LIB_DIR="${PROJECT_ROOT}/lib"
 SCRIPTS_DIR="${PROJECT_ROOT}"
 
-# ---------------------------------------------------------------------------
-# Colores mínimos (antes de sourcer common.sh)
-# ---------------------------------------------------------------------------
 if [[ -t 1 ]]; then
     _B='\033[1m'; _C='\033[0;36m'; _G='\033[0;32m'
     _Y='\033[1;33m'; _R='\033[0;31m'; _X='\033[0m'
@@ -35,11 +27,9 @@ _die()  { echo -e "${_R}error: $*${_X}" >&2; exit 1; }
 
 _require_root() {
     [[ "${EUID}" -eq 0 ]] \
-        || _die "requiere root — ejecuta: sudo wifi $*"
+        || _die "requiere root  ejecuta: sudo wifi $*"
 }
 
-# Source common.sh para tener log(), die(), validate_interface(), etc.
-# Solo si existe (no requerido para help/version antes de instalar)
 _source_common() {
     [[ -f "${LIB_DIR}/common.sh" ]] \
         && source "${LIB_DIR}/common.sh" \
@@ -71,7 +61,7 @@ _cmd_check() {
     if [[ -z "${mode}" ]]; then
         local state="/opt/wifi-setup/state/install.state"
         [[ -f "${state}" ]] \
-            || _die "no hay instalación activa — especifica modo: wifi check <server|client>"
+            || _die "no hay instalacin activa  especifica modo: wifi check <server|client>"
         # shellcheck source=/dev/null
         source "${state}"
         mode="${INSTALL_MODE}"
@@ -85,19 +75,19 @@ _cmd_check() {
 _cmd_status() {
     _source_common
 
-    echo -e "${_B}── Interfaces ──────────────────────────${_X}"
+    echo -e "${_B} Interfaces ${_X}"
     ip addr show | grep -E '^[0-9]+:|inet ' | grep -v '127.0.0.1'
 
     echo ""
-    echo -e "${_B}── Rutas ───────────────────────────────${_X}"
+    echo -e "${_B} Rutas ${_X}"
     ip route show
 
     echo ""
-    echo -e "${_B}── WiFi ────────────────────────────────${_X}"
+    echo -e "${_B} WiFi ${_X}"
     iw dev 2>/dev/null || ip link show | grep -E '^[0-9]+.*wl'
 
     echo ""
-    echo -e "${_B}── Conectividad ────────────────────────${_X}"
+    echo -e "${_B} Conectividad ${_X}"
     if ping -c1 -W2 1.1.1.1 >/dev/null 2>&1; then
         echo -e "${_G}  internet: OK${_X}"
     else
@@ -105,7 +95,27 @@ _cmd_status() {
     fi
 
     echo ""
-    echo -e "${_B}── Tailscale ───────────────────────────${_X}"
+    echo -e "${_B} Alcance SSH ${_X}"
+    local ssh_iface
+    if [[ -f "${LIB_DIR}/detect.sh" ]]; then
+        source "${LIB_DIR}/detect.sh"
+        ssh_iface="$(detect_ssh_iface 2>/dev/null || true)"
+    fi
+    if [[ -n "${ssh_iface:-}" ]]; then
+        local ssh_ip
+        ssh_ip="$(ip -o -4 addr show "${ssh_iface}" 2>/dev/null | awk '{print $4}' | head -1)"
+        echo -e "  ssh entra por: ${_G}${ssh_iface}${_X} (${ssh_ip:-sin IP})"
+    else
+        echo -e "  ${_Y}no se pudo determinar la interfaz SSH (sin sesion SSH activa?)${_X}"
+    fi
+    if ss -tlnp 2>/dev/null | grep -q ':22 '; then
+        echo -e "  sshd escucha en: $(ss -tlnp 2>/dev/null | awk '/:22 /{print $4}' | head -1)"
+    else
+        echo -e "  ${_R}sshd no parece estar escuchando en :22${_X}"
+    fi
+
+    echo ""
+    echo -e "${_B} Tailscale ${_X}"
     tailscale status 2>/dev/null || echo "tailscale no activo"
 }
 
@@ -122,6 +132,285 @@ _cmd_list() {
 }
 
 # ---------------------------------------------------------------------------
+# helper: elegir interfaz wifi (1 sola -> directo; 2+ sin arg -> preguntar)
+# uso: iface="$(_pick_wifi_iface "${arg_iface:-}")"
+# ---------------------------------------------------------------------------
+_pick_wifi_iface() {
+    local explicit="${1:-}"
+    if [[ -n "${explicit}" ]]; then
+        echo "${explicit}"
+        return 0
+    fi
+
+    local -a ifaces=()
+    while IFS= read -r l; do [[ -n "${l}" ]] && ifaces+=("${l}"); done \
+        < <(detect_wifi_interfaces)
+
+    case "${#ifaces[@]}" in
+        0) _die "no se detecto ninguna interfaz wifi" ;;
+        1) echo "${ifaces[0]}" ;;
+        *)
+            echo "hay varias interfaces wifi  elegi una:" >&2
+            local sel
+            select sel in "${ifaces[@]}"; do
+                [[ -n "${sel}" ]] && { echo "${sel}"; return 0; }
+                echo "opcion invalida, intenta de nuevo" >&2
+            done
+            ;;
+    esac
+}
+
+# ---------------------------------------------------------------------------
+# cmd: add   agregar una red wifi nueva (no reemplaza las existentes)
+# ---------------------------------------------------------------------------
+_cmd_add() {
+    _require_root "add"
+    _source_common
+    source "${LIB_DIR}/net.sh"
+
+    local ssid="" iface_arg="" all_mode=0
+    for a in "$@"; do
+        case "${a}" in
+            --all) all_mode=1 ;;
+            *) [[ -z "${ssid}" ]] && ssid="${a}" || iface_arg="${a}" ;;
+        esac
+    done
+
+    if [[ -z "${ssid}" ]]; then
+        echo "uso: sudo wifi add <ssid> [iface]"
+        echo "     sudo wifi add <ssid> --all"
+        echo ""
+        echo "Agrega una red wifi nueva. No borra las que ya estan guardadas."
+        echo "Sin iface: si hay una sola tarjeta wifi la usa directo; si hay"
+        echo "varias, pregunta cual usar. --all la agrega a todas las tarjetas"
+        echo "detectadas (crea el archivo si no existia)."
+        exit 1
+    fi
+
+    local passwd
+    while true; do
+        read -r -s -p "contrasea para '${ssid}' (min 8 chars): " passwd || true
+        echo
+        [[ "${#passwd}" -ge 8 ]] && break
+        echo "error: minimo 8 caracteres" >&2
+    done
+
+    local psk_line
+    psk_line="$(wpa_passphrase "${ssid}" "${passwd}" 2>/dev/null \
+        | grep -E '^\s+psk=' | grep -v '#' | tr -d '\t ' || true)"
+    unset passwd
+    [[ -n "${psk_line}" ]] || _die "wpa_passphrase no genero PSK"
+
+    if [[ "${all_mode}" -eq 1 ]]; then
+        local -a ifaces=()
+        while IFS= read -r l; do [[ -n "${l}" ]] && ifaces+=("${l}"); done \
+            < <(detect_wifi_interfaces)
+        [[ "${#ifaces[@]}" -gt 0 ]] || _die "no se detecto ninguna interfaz wifi"
+
+        for ifc in "${ifaces[@]}"; do
+            configure_wpa "${ifc}" "${ssid}" "${psk_line}" ""
+            systemctl restart "wpa_supplicant@${ifc}" 2>/dev/null || true
+            echo "ok: '${ssid}' agregada en ${ifc}"
+        done
+        return 0
+    fi
+
+    local iface
+    iface="$(_pick_wifi_iface "${iface_arg}")"
+    validate_interface "${iface}"
+
+    configure_wpa "${iface}" "${ssid}" "${psk_line}" ""
+    systemctl restart "wpa_supplicant@${iface}" 2>/dev/null || true
+    log "INFO" "red '${ssid}' agregada en ${iface}"
+    echo "ok: '${ssid}' agregada en ${iface}"
+}
+
+# ---------------------------------------------------------------------------
+# cmd: switch   cambiar de red dentro de la MISMA interfaz activa
+# ---------------------------------------------------------------------------
+_cmd_switch() {
+    _require_root "switch"
+    _source_common
+    source "${LIB_DIR}/net.sh"
+    source "${LIB_DIR}/detect.sh"
+
+    local ssid="${1:-}"
+    [[ -n "${ssid}" ]] \
+        || _die "uso: sudo wifi switch <ssid>  (la red debe estar ya agregada con 'wifi add')"
+
+    local iface
+    iface="$(detect_ssh_iface 2>/dev/null || true)"
+    if [[ -z "${iface}" ]]; then
+        local -a ifaces=()
+        while IFS= read -r l; do [[ -n "${l}" ]] && ifaces+=("${l}"); done \
+            < <(detect_wifi_interfaces)
+        [[ "${#ifaces[@]}" -eq 1 ]] || _die "no se pudo determinar la interfaz activa  usa: sudo wifi useif <iface> primero"
+        iface="${ifaces[0]}"
+    fi
+
+    wpa_network_exists "${iface}" "${ssid}" \
+        || _die "la red '${ssid}' no esta agregada en ${iface}  usa: sudo wifi add ${ssid}"
+
+    set_wpa_disabled "${iface}" "${ssid}" "on"
+    systemctl restart "wpa_supplicant@${iface}" 2>/dev/null || true
+    log "INFO" "switch a '${ssid}' en ${iface}"
+    echo "ok: cambiando a '${ssid}' en ${iface}  verifica con: wifi status"
+}
+
+# ---------------------------------------------------------------------------
+# cmd: useif   cambiar cual interfaz wifi esta activa (trae la nueva antes
+# de apagar la vieja  nunca al reves)
+# ---------------------------------------------------------------------------
+_cmd_useif() {
+    _require_root "useif"
+    _source_common
+    source "${LIB_DIR}/net.sh"
+    source "${LIB_DIR}/detect.sh"
+
+    local new_iface="${1:-}"
+    [[ -n "${new_iface}" ]] \
+        || _die "uso: sudo wifi useif <iface>  (debe tener una red ya agregada con 'wifi add')"
+
+    validate_interface "${new_iface}"
+
+    local conf="/etc/wpa_supplicant/wpa_supplicant-${new_iface}.conf"
+    [[ -f "${conf}" ]] \
+        || _die "no hay ninguna red agregada en ${new_iface}  usa: sudo wifi add <ssid> ${new_iface}"
+
+    local old_iface
+    old_iface="$(detect_ssh_iface 2>/dev/null || true)"
+
+    if [[ "${old_iface}" == "${new_iface}" ]]; then
+        echo "ok: ${new_iface} ya es la interfaz activa, nada que hacer"
+        return 0
+    fi
+
+    echo "levantando ${new_iface}..."
+    enable_wpa_service "${new_iface}"
+    dhcpcd -n "${new_iface}" 2>/dev/null || true
+    sleep 5
+
+    if ! ping -c1 -W5 1.1.1.1 >/dev/null 2>&1; then
+        log "WARN" "${new_iface} sin conectividad  no se toca ${old_iface:-la interfaz vieja}"
+        _die "no se pudo conectar por ${new_iface}  ${old_iface:-la interfaz anterior} sigue activa, nada cambio"
+    fi
+
+    log "INFO" "conectividad OK en ${new_iface}"
+
+    if [[ -n "${old_iface}" ]]; then
+        echo "apagando ${old_iface} (la nueva ya funciona)..."
+        systemctl stop "wpa_supplicant@${old_iface}" 2>/dev/null || true
+        dhcpcd -k "${old_iface}" 2>/dev/null || true
+        log "INFO" "useif: ${old_iface} -> ${new_iface}"
+    fi
+
+    echo "ok: interfaz activa ahora es ${new_iface}  verifica con: wifi status"
+}
+
+# ---------------------------------------------------------------------------
+# cmd: autoconnect   habilitar/deshabilitar reconexion automatica a un ssid
+# ---------------------------------------------------------------------------
+_cmd_autoconnect() {
+    _require_root "autoconnect"
+    _source_common
+    source "${LIB_DIR}/net.sh"
+
+    local ssid="${1:-}" mode="${2:-}" iface_arg="${3:-}"
+    if [[ -z "${ssid}" ]] || [[ -z "${mode}" ]]; then
+        echo "uso: sudo wifi autoconnect <ssid> <on|off> [iface]"
+        exit 1
+    fi
+    [[ "${mode}" == "on" ]] || [[ "${mode}" == "off" ]] \
+        || _die "modo invalido: '${mode}' (usa on|off)"
+
+    local iface
+    iface="$(_pick_wifi_iface "${iface_arg}")"
+    validate_interface "${iface}"
+
+    set_wpa_disabled "${iface}" "${ssid}" "${mode}"
+    systemctl restart "wpa_supplicant@${iface}" 2>/dev/null || true
+    echo "ok: autoconnect de '${ssid}' en ${iface} -> ${mode}"
+}
+
+# ---------------------------------------------------------------------------
+# cmd: band   fijar banda (2.4|5) de un ssid ya agregado
+# ---------------------------------------------------------------------------
+_cmd_band() {
+    _require_root "band"
+    _source_common
+    source "${LIB_DIR}/net.sh"
+
+    local ssid="${1:-}" band_arg="${2:-}" iface_arg="${3:-}"
+    if [[ -z "${ssid}" ]]; then
+        echo "uso: sudo wifi band <ssid> [2.4|5] [iface]"
+        echo ""
+        echo "Sin banda: escanea y pregunta cual fijar entre lo detectado."
+        echo "Con banda: aplica las frecuencias detectadas para esa banda;"
+        echo "si no detecta nada en esa banda, avisa y la fuerza con canales"
+        echo "estandar (puede no conectar si el AP no la transmite ahi)."
+        exit 1
+    fi
+
+    local iface
+    iface="$(_pick_wifi_iface "${iface_arg}")"
+    validate_interface "${iface}"
+    wpa_network_exists "${iface}" "${ssid}" \
+        || _die "la red '${ssid}' no esta agregada en ${iface}  usa: sudo wifi add ${ssid}"
+
+    echo "escaneando '${ssid}' en ${iface}..." >&2
+    local seen
+    seen="$(scan_ssid_frequencies "${iface}" "${ssid}")"
+
+    local -a freq24=() freq5=()
+    for f in ${seen}; do
+        if (( f >= 2400 && f < 2500 )); then freq24+=("${f}")
+        elif (( f >= 5000 && f < 5900 )); then freq5+=("${f}")
+        fi
+    done
+
+    if [[ -z "${band_arg}" ]]; then
+        local -a opts=()
+        [[ "${#freq24[@]}" -gt 0 ]] && opts+=("2.4 (${freq24[*]})")
+        [[ "${#freq5[@]}" -gt 0 ]] && opts+=("5 (${freq5[*]})")
+        [[ "${#opts[@]}" -gt 0 ]] \
+            || _die "no se detecto ninguna banda para '${ssid}'  especifica 2.4 o 5 para forzarla a ciegas"
+
+        echo "bandas detectadas para '${ssid}'  elegi cual fijar:" >&2
+        local sel
+        select sel in "${opts[@]}"; do
+            [[ -n "${sel}" ]] && { band_arg="${sel%% *}"; break; }
+            echo "opcion invalida, intenta de nuevo" >&2
+        done
+    fi
+
+    local freqs=""
+    case "${band_arg}" in
+        2.4)
+            if [[ "${#freq24[@]}" -gt 0 ]]; then
+                freqs="${freq24[*]}"
+            else
+                echo -e "${_Y}aviso: no se vio 2.4GHz en el escaneo para '${ssid}'  forzando con canales estandar, puede no conectar${_X}" >&2
+                freqs="2412 2417 2422 2427 2432 2437 2442 2447 2452 2457 2462 2467 2472"
+            fi
+            ;;
+        5)
+            if [[ "${#freq5[@]}" -gt 0 ]]; then
+                freqs="${freq5[*]}"
+            else
+                echo -e "${_Y}aviso: no se vio 5GHz en el escaneo para '${ssid}'  forzando con canales estandar, puede no conectar${_X}" >&2
+                freqs="5180 5200 5220 5240 5260 5280 5300 5320 5500 5520 5540 5560 5580 5600 5620 5640 5660 5680 5700 5745 5765 5785 5805 5825"
+            fi
+            ;;
+        *)
+            _die "banda invalida: '${band_arg}' (usa 2.4 o 5)" ;;
+    esac
+
+    set_wpa_freqlist "${iface}" "${ssid}" "${freqs}"
+    systemctl restart "wpa_supplicant@${iface}" 2>/dev/null || true
+    echo "ok: '${ssid}' fijada a banda ${band_arg} en ${iface}"
+}
+
+# ---------------------------------------------------------------------------
 # cmd: passwd
 # ---------------------------------------------------------------------------
 _cmd_passwd() {
@@ -130,7 +419,7 @@ _cmd_passwd() {
 
     local iface="${1:-}"
     [[ -n "${iface}" ]] \
-        || _die "debes indicar la interfaz — uso: sudo wifi passwd <interfaz>"
+        || _die "debes indicar la interfaz  uso: sudo wifi passwd <interfaz>"
 
     validate_interface "${iface}"
 
@@ -143,17 +432,17 @@ _cmd_passwd() {
 
     local passwd
     while true; do
-        read -r -s -p "nueva contraseña (mín 8 chars): " passwd || true
+        read -r -s -p "nueva contrasea (min 8 chars): " passwd || true
         echo
         [[ "${#passwd}" -ge 8 ]] && break
-        echo "error: mínimo 8 caracteres" >&2
+        echo "error: minimo 8 caracteres" >&2
     done
 
     local ssid psk_line
     ssid="$(grep -oP '(?<=ssid=")[^"]+' "${conf}" | head -1)"
     psk_line="$(wpa_passphrase "${ssid}" "${passwd}" 2>/dev/null \
         | grep -E '^\s+psk=' | grep -v '#' | tr -d '\t ' || true)"
-    [[ -n "${psk_line}" ]] || _die "wpa_passphrase no generó PSK — verifica la contraseña"
+    [[ -n "${psk_line}" ]] || _die "wpa_passphrase no genero PSK  verifica la contrasea"
 
     unset passwd
     source "${LIB_DIR}/net.sh"
@@ -164,14 +453,14 @@ _cmd_passwd() {
     log "INFO" "password updated for ssid '${ssid}' on ${iface}"
 
     if ! ping -c1 -W5 1.1.1.1 >/dev/null 2>&1; then
-        log "WARN" "connectivity check failed — rolling back ${iface} config"
+        log "WARN" "connectivity check failed  rolling back ${iface} config"
         rollback_network "${conf}.rollback" "${conf}"
         systemctl restart "wpa_supplicant@${iface}" 2>/dev/null || true
-        _die "sin conectividad tras el cambio — config restaurada"
+        _die "sin conectividad tras el cambio  config restaurada"
     fi
 
     log "INFO" "connectivity OK"
-    echo "ok: contraseña actualizada y conectividad verificada"
+    echo "ok: contrasea actualizada y conectividad verificada"
 }
 
 # ---------------------------------------------------------------------------
@@ -183,13 +472,13 @@ _cmd_showpass() {
 
     local iface="${1:-}"
     [[ -n "${iface}" ]] \
-        || _die "debes indicar la interfaz — uso: sudo wifi showpass <interfaz>"
+        || _die "debes indicar la interfaz  uso: sudo wifi showpass <interfaz>"
 
     validate_interface "${iface}"
 
     local conf="${CONFIG_DIR}/${iface}.conf"
     [[ -f "${conf}" ]] \
-        || _die "no existe configuración para '${iface}'"
+        || _die "no existe configuracin para '${iface}'"
 
     local ssid nm_psk
     ssid="$(grep -oP '(?<=ssid=")[^"]+' "${conf}")"
@@ -204,8 +493,8 @@ _cmd_showpass() {
         local psk_hash
         psk_hash="$(grep -oP '(?<=psk=)[^\s]+' "${conf}" || true)"
         echo "ssid    : ${ssid}"
-        echo "psk     : ${psk_hash} (hash — no reversible)"
-        echo "nota    : para ver la contraseña original usa nmcli con el agente activo"
+        echo "psk     : ${psk_hash} (hash  no reversible)"
+        echo "nota    : para ver la contrasea original usa nmcli con el agente activo"
     fi
 }
 
@@ -216,7 +505,7 @@ _cmd_panic() {
     _require_root "panic"
     _source_common
 
-    log "INFO" "wifi panic: iniciando recuperación de red..."
+    log "INFO" "wifi panic: iniciando recuperacin de red..."
 
     local state="/opt/wifi-setup/state/install.state"
     [[ -f "${state}" ]] && source "${state}"
@@ -242,7 +531,7 @@ _cmd_panic() {
         fi
 
         dhcpcd -n "${iface}" 2>/dev/null \
-            || log "WARN" "dhcpcd falló en ${iface}"
+            || log "WARN" "dhcpcd fall en ${iface}"
         found=1
     done
 
@@ -254,16 +543,15 @@ _cmd_panic() {
 
     if [[ "${found}" -eq 0 ]]; then
         log "WARN" "no se encontraron interfaces wireless"
-        echo "warn: no se encontraron interfaces wireless — verifica: ip link show" >&2
+        echo "warn: no se encontraron interfaces wireless  verifica: ip link show" >&2
         exit 1
     fi
 
-    log "INFO" "wifi panic: recuperación completada"
+    log "INFO" "wifi panic: recuperacin completada"
 }
 
-
 # ---------------------------------------------------------------------------
-# cmd: setip  — cambiar IP upstream manualmente sin reinstalar
+# cmd: setip   cambiar IP upstream manualmente sin reinstalar
 # ---------------------------------------------------------------------------
 _cmd_setip() {
     _require_root "setip"
@@ -287,19 +575,17 @@ _cmd_setip() {
     local state="/opt/wifi-setup/state/install.state"
     [[ -f "${state}" ]] && source "${state}"
 
-    # Modelo dhcpcd: la IP la asigna el AP. 'setip' reaplica el setup
-    # (MAC .link + dhcpcd) y renueva el lease.
     setup_upstream_dhcpcd "${iface}" "${CHOSEN_MAC:-}"
     dhcpcd -n "${iface}" 2>/dev/null || true
     sleep 5
 
     show_upstream_config "${iface}"
-    log "INFO" "upstream ${iface} reconfigurado vía dhcpcd (IP del AP)"
+    log "INFO" "upstream ${iface} reconfigurado via dhcpcd (IP del AP)"
     echo "ok: lease renovado. La IP la asigna el AP."
 }
 
 # ---------------------------------------------------------------------------
-# cmd: showmac  — mostrar MAC persistente generada
+# cmd: showmac   mostrar MAC persistente generada
 # ---------------------------------------------------------------------------
 _cmd_showmac() {
     _source_common
@@ -312,7 +598,7 @@ _cmd_showmac() {
 }
 
 # ---------------------------------------------------------------------------
-# cmd: setmac  — cambiar MAC en caliente, persistente, con auto-rollback
+# cmd: setmac   cambiar MAC en caliente, persistente, con auto-rollback
 # ---------------------------------------------------------------------------
 _cmd_setmac() {
     _require_root "setmac"
@@ -324,11 +610,11 @@ _cmd_setmac() {
 
     if [[ -z "${iface}" ]] || [[ -z "${mac_arg}" ]]; then
         echo "uso: sudo wifi setmac <interfaz> <mac|random>"
-        echo "     sudo wifi setmac wlan1 00:1A:A0:3F:2B:1C   # MAC específica"
+        echo "     sudo wifi setmac wlan1 00:1A:A0:3F:2B:1C   # MAC especifica"
         echo "     sudo wifi setmac wlan1 random              # nueva Windows-like"
         echo ""
         echo "Cambia la MAC al instante, la persiste en el .network y verifica"
-        echo "internet; si falla, revierte automáticamente a la MAC anterior."
+        echo "internet; si falla, revierte automaticamente a la MAC anterior."
         exit 1
     fi
 
@@ -403,21 +689,28 @@ _cmd_version() {
 # ---------------------------------------------------------------------------
 _cmd_help() {
     echo -e "
-${_B}${_C}  wifi-setup${_X} — gestión de red WiFi para servidor/cliente
+${_B}${_C}  wifi-setup${_X}  gestin de red WiFi para servidor/cliente
 
 ${_B}uso:${_X}
   sudo wifi install          instalar o actualizar (interactivo)
   sudo wifi uninstall        desinstalar completamente
-  sudo wifi check            verificar estado de la instalación
-  sudo wifi check <modo>     verificar modo específico: server | client
+  sudo wifi check            verificar estado de la instalacion
+  sudo wifi check <modo>     verificar modo especifico: server | client
 
-  wifi status                interfaces, rutas, conectividad, Tailscale
+  wifi status                interfaces, rutas, conectividad, alcance SSH, Tailscale
   wifi list                  redes WiFi visibles
 
-  sudo wifi passwd <iface>   cambiar contraseña WPA de una interfaz
-  sudo wifi showpass <iface> mostrar SSID y contraseña guardada
-  sudo wifi panic            recuperación de emergencia de red
-  sudo wifi setip <iface> <ip>  cambiar IP upstream manualmente
+  sudo wifi add <ssid> [iface]   agregar red nueva (no borra las existentes)
+  sudo wifi add <ssid> --all     agregarla en todas las interfaces wifi
+  sudo wifi switch <ssid>        cambiar de red en la interfaz activa
+  sudo wifi useif <iface>        cambiar cual interfaz wifi esta activa
+  sudo wifi autoconnect <ssid> <on|off> [iface]  reconexion automatica
+  sudo wifi band <ssid> [2.4|5] [iface]          fijar banda de una red
+
+  sudo wifi passwd <iface>   cambiar contrasea WPA de una interfaz
+  sudo wifi showpass <iface> mostrar SSID y contrasea guardada
+  sudo wifi panic            recuperacion de emergencia de red
+  sudo wifi setip <iface>    cambiar IP upstream manualmente
   sudo wifi setmac <iface> <mac|random>  cambiar MAC en caliente (rollback auto)
   wifi showmac <iface>       mostrar MAC persistente asignada
 
@@ -425,15 +718,16 @@ ${_B}uso:${_X}
   sudo wifi uplink fallback <iface>  definir interfaz FALLBACK de internet
   wifi uplink-status         ver PRIMARY/FALLBACK/activo actual
 
-  wifi version               versión instalada
+  wifi version               version instalada
   wifi help                  esta ayuda
 
 ${_B}ejemplos:${_X}
   sudo wifi install
   sudo wifi check
   wifi status
+  sudo wifi add CasaWifi
+  sudo wifi switch CelularHotspot
   sudo wifi panic
-  sudo wifi passwd wlan1
 "
 }
 
@@ -449,15 +743,20 @@ case "${CMD}" in
     check|verify)        _cmd_check     "$@" ;;
     status)              _cmd_status        ;;
     list)                _cmd_list          ;;
+    add)                  _cmd_add        "$@" ;;
+    switch)               _cmd_switch     "$@" ;;
+    useif)                _cmd_useif      "$@" ;;
+    autoconnect)          _cmd_autoconnect "$@" ;;
+    band)                 _cmd_band       "$@" ;;
     passwd|password)     _cmd_passwd    "$@" ;;
     showpass|show-pass)  _cmd_showpass  "$@" ;;
     panic)               _cmd_panic         ;;
     setip)               _cmd_setip     "$@" ;;
-    setmac)              _cmd_setmac    "$@" ;;
-    showmac)             _cmd_showmac   "$@" ;;
-    uplink)              _cmd_uplink       "$@" ;;
-    uplink-event)        _cmd_uplink_event "$@" ;;
-    uplink-status)       _cmd_uplink_status     ;;
+    setmac)               _cmd_setmac    "$@" ;;
+    showmac)              _cmd_showmac   "$@" ;;
+    uplink)               _cmd_uplink       "$@" ;;
+    uplink-event)         _cmd_uplink_event "$@" ;;
+    uplink-status)        _cmd_uplink_status     ;;
     version|-v|--version)_cmd_version       ;;
     help|-h|--help)      _cmd_help          ;;
     *)
