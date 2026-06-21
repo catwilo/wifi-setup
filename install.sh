@@ -344,6 +344,15 @@ chmod +x "${INSTALL_DIR}"/*.sh
 
 ln -sf "${INSTALL_DIR}/bin/wifi" "/usr/local/bin/wifi"
 
+# Instalar hook dhcpcd de failover uplink (idempotente)
+if [[ -f "${SCRIPT_DIR}/dhcpcd-hooks/90-wifi-setup-uplink" ]]; then
+    for _hd in /lib/dhcpcd/dhcpcd-hooks /usr/lib/dhcpcd/dhcpcd-hooks; do
+        [[ -d "${_hd}" ]] || continue
+        cp -a "${SCRIPT_DIR}/dhcpcd-hooks/90-wifi-setup-uplink" "${_hd}/90-wifi-setup-uplink"
+        log "INFO" "hook uplink instalado en ${_hd}"
+    done
+fi
+
 # ===========================================================================
 # CONFIGURAR SSH (antes de tocar la red — seguridad primero)
 # ===========================================================================

@@ -21,6 +21,7 @@ uplink_load() {
 # ---------------------------------------------------------------------------
 uplink_set_roles() {
     local primary="$1" fallback="$2"
+    [[ "${primary}" == "${fallback}" ]] && die "PRIMARY y FALLBACK no pueden ser la misma interfaz (${primary}) -- define ambas distintas"
     validate_interface "${primary}"
     validate_interface "${fallback}"
     mkdir -p "${STATE_DIR}"
