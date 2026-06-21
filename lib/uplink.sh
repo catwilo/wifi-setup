@@ -66,6 +66,25 @@ uplink_activate() {
 }
 
 # ---------------------------------------------------------------------------
+# _uplink_has_internet <iface>
+# Confirmacion puntual de internet real (no carrier fisico) POR ESA IFACE
+# especifica (ping -I), 3 intentos espaciados. Anclar a la iface evita un
+# falso positivo si otra interfaz (p.ej. el fallback) tambien tuviera ruta
+# default -- sin esto, el ping podria salir por otro lado y dar OK aunque
+# la iface evaluada no tenga internet real. Se llama SOLO dentro de un
+# evento ya disparado por el kernel (NOCARRIER) -- no es un poller/timer
+# en reposo, cero consumo cuando no esta pasando nada.
+# ---------------------------------------------------------------------------
+_uplink_has_internet() {
+    local iface="$1" i
+    for i in 1 2 3; do
+        ping -c1 -W2 -I "${iface}" 1.1.1.1 >/dev/null 2>&1 && return 0
+        [[ "${i}" -lt 3 ]] && sleep 3
+    done
+    return 1
+}
+
+# ---------------------------------------------------------------------------
 # uplink_on_carrier_event <iface> <reason>
 # Llamado desde el dhcpcd hook. reason: CARRIER | NOCARRIER
 # No-preemptivo: si el activo actual pierde carrier, pasa al otro.
@@ -78,10 +97,14 @@ uplink_on_carrier_event() {
     [[ "${iface}" == "${UPLINK_ACTIVE}" ]] || return 0
 
     if [[ "${reason}" == "NOCARRIER" ]]; then
+        if _uplink_has_internet "${iface}"; then
+            log "INFO" "uplink: ${UPLINK_ACTIVE} sin carrier momentaneo pero internet OK tras confirmar -- sin accion"
+            return 0
+        fi
         local other=""
         [[ "${UPLINK_ACTIVE}" == "${UPLINK_PRIMARY}" ]] && other="${UPLINK_FALLBACK}"
         [[ "${UPLINK_ACTIVE}" == "${UPLINK_FALLBACK}" ]] && other="${UPLINK_PRIMARY}"
-        log "WARN" "uplink: ${UPLINK_ACTIVE} perdio carrier -- activando ${other}"
+        log "WARN" "uplink: ${UPLINK_ACTIVE} sin carrier e internet no confirmado -- activando ${other}"
         uplink_activate "${other}"
     fi
     # CARRIER (recuperacion) en la interfaz activa: no-op, ya esta activa.
