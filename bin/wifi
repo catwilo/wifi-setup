@@ -669,6 +669,43 @@ _cmd_uplink_event() {
 }
 
 # ---------------------------------------------------------------------------
+# cmd: lan   definir rol del cable LAN: server | client | router (#7)
+# ---------------------------------------------------------------------------
+_cmd_lan() {
+    _require_root "lan"
+    _source_common
+    source "${LIB_DIR}/lan.sh"
+    source "${LIB_DIR}/net.sh"
+    source "${LIB_DIR}/detect.sh"
+
+    local mode="${1:-}" iface="${2:-}" upstream="${3:-}"
+    if [[ -z "${mode}" ]]; then
+        echo "uso: sudo wifi lan <server|client|router> [iface] [upstream_iface]"
+        echo ""
+        echo "Define el rol del cable LAN (enp4s0 por defecto), persistente a reinicio."
+        echo "  server   IP 1.2.3.2/24, comparte upstream por NAT si lo tiene (cable a otro compu)"
+        echo "  client   IP 1.2.3.1/24, comparte upstream por NAT si lo tiene (cable a otro compu)"
+        echo "  router   DHCP del router conectado al cable, sin NAT (solo conectividad)"
+        echo ""
+        echo "server/client: NAT bidireccional -- cualquiera de los dos comparte su"
+        echo "internet al otro si lo tiene, automatico, sin pasos manuales extra."
+        exit 1
+    fi
+
+    lan_set_role "${mode}" "${iface}" "${upstream}"
+    echo "ok: rol lan '${mode}' aplicado en ${iface:-enp4s0}, persistente -- verifica con: wifi lan-status"
+}
+
+# ---------------------------------------------------------------------------
+# cmd: lan-status
+# ---------------------------------------------------------------------------
+_cmd_lan_status() {
+    _source_common
+    source "${LIB_DIR}/lan.sh"
+    lan_status
+}
+
+# ---------------------------------------------------------------------------
 # cmd: uplink-status
 # ---------------------------------------------------------------------------
 _cmd_uplink_status() {
@@ -718,6 +755,9 @@ ${_B}uso:${_X}
   sudo wifi uplink fallback <iface>  definir interfaz FALLBACK de internet
   wifi uplink-status         ver PRIMARY/FALLBACK/activo actual
 
+  sudo wifi lan <server|client|router> [iface]  rol del cable LAN
+  wifi lan-status            ver rol LAN actual
+
   wifi version               version instalada
   wifi help                  esta ayuda
 
@@ -757,6 +797,8 @@ case "${CMD}" in
     uplink)               _cmd_uplink       "$@" ;;
     uplink-event)         _cmd_uplink_event "$@" ;;
     uplink-status)        _cmd_uplink_status     ;;
+    lan)                   _cmd_lan        "$@" ;;
+    lan-status)            _cmd_lan_status        ;;
     version|-v|--version)_cmd_version       ;;
     help|-h|--help)      _cmd_help          ;;
     *)
