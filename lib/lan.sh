@@ -39,6 +39,27 @@ lan_status() {
 }
 
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# _lan_ensure_dhcpcd_allows <iface>
+# Si dhcpcd.conf restringe interfaces via "allowinterfaces" y <iface> no esta
+# en la lista, dhcpcd la rechaza ("invalid configuration") y el modo router
+# nunca obtiene DHCP. Esta funcion la anade a la lista (idempotente). Si no
+# hay directiva allowinterfaces, dhcpcd ya gestiona todo -> no hace nada.
+# Solo ANADE; nunca quita una iface existente (no romper el acceso SSH).
+# ---------------------------------------------------------------------------
+_lan_ensure_dhcpcd_allows() {
+    local iface="$1" conf="/etc/dhcpcd.conf"
+    [[ -f "${conf}" ]] || return 0
+    grep -qE "^allowinterfaces " "${conf}" || return 0
+    if grep -qE "^allowinterfaces .*\b${iface}\b" "${conf}"; then
+        log "INFO" "lan: ${iface} ya permitido en dhcpcd allowinterfaces"
+        return 0
+    fi
+    cp -a "${conf}" "${conf}.wifisetup.bak" 2>/dev/null || true
+    sed -i "s/^\(allowinterfaces .*\)$/\1 ${iface}/" "${conf}"
+    log "INFO" "lan: ${iface} anadido a dhcpcd allowinterfaces (era excluido)"
+}
+
 # _lan_write_unit <iface> <mode> <upstream>
 # Escribe y arranca el systemd unit que aplica el rol en cada boot.
 # ---------------------------------------------------------------------------
@@ -138,6 +159,7 @@ EOF
     chmod 600 "${LAN_CONF}"
     log "INFO" "lan roles definidos: IFAZ=${iface} MODO=${mode} UPSTREAM=${upstream:-ninguno}"
 
+    [[ "${mode}" == "router" ]] && _lan_ensure_dhcpcd_allows "${iface}"
     _lan_write_unit "${iface}" "${mode}" "${upstream}"
     log "INFO" "lan: rol '${mode}' aplicado y persistente en ${iface}"
 }
