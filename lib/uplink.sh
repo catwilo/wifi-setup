@@ -115,11 +115,35 @@ uplink_on_carrier_event() {
 # uplink_status: imprime estado actual legible.
 # ---------------------------------------------------------------------------
 uplink_status() {
-    if ! uplink_load; then
-        echo "uplink: no configurado. Usa: wifi uplink primary <iface> fallback <iface>"
+    uplink_load 2>/dev/null || true
+    if [[ -z "${UPLINK_PRIMARY:-}" ]] && [[ -z "${UPLINK_FALLBACK:-}" ]]; then
+        echo "uplink: no configurado. Usa: wifi uplink primary <iface> && wifi uplink fallback <iface>"
         return 0
     fi
-    echo "PRIMARY  : ${UPLINK_PRIMARY}"
-    echo "FALLBACK : ${UPLINK_FALLBACK}"
-    echo "ACTIVO   : ${UPLINK_ACTIVE}"
+    echo "PRIMARY  : ${UPLINK_PRIMARY:-'(no definido)'}"
+    echo "FALLBACK : ${UPLINK_FALLBACK:-'(no definido)'}"
+    echo "ACTIVO   : ${UPLINK_ACTIVE:-'(pendiente -- ambos roles deben estar definidos)'}"
 }
+
+# uplink_save_partial <primary|fallback> <iface>
+# Guarda un solo rol sin validar el opuesto -- usado cuando se define
+# primary o fallback por separado antes de tener ambos.
+uplink_save_partial() {
+    local role="$1" iface="$2"
+    validate_interface "${iface}"
+    mkdir -p "${STATE_DIR}"
+    uplink_load 2>/dev/null || true
+    if [[ "${role}" == "primary" ]]; then
+        UPLINK_PRIMARY="${iface}"
+    else
+        UPLINK_FALLBACK="${iface}"
+    fi
+    cat > "${UPLINK_CONF}" <<EOF2
+UPLINK_PRIMARY="${UPLINK_PRIMARY:-}"
+UPLINK_FALLBACK="${UPLINK_FALLBACK:-}"
+UPLINK_ACTIVE="${UPLINK_ACTIVE:-}"
+EOF2
+    chmod 600 "${UPLINK_CONF}"
+    log "INFO" "uplink ${role} parcial guardado: ${iface} (el otro rol aun no definido)"
+}
+

@@ -672,11 +672,19 @@ _cmd_uplink() {
     case "${role}" in
         primary)
             uplink_load 2>/dev/null || true
-            uplink_set_roles "${iface}" "${UPLINK_FALLBACK:-${iface}}"
+            if [[ -n "${UPLINK_FALLBACK:-}" ]]; then
+                uplink_set_roles "${iface}" "${UPLINK_FALLBACK}"
+            else
+                uplink_save_partial primary "${iface}"
+            fi
             ;;
         fallback)
             uplink_load 2>/dev/null || true
-            uplink_set_roles "${UPLINK_PRIMARY:-${iface}}" "${iface}"
+            if [[ -n "${UPLINK_PRIMARY:-}" ]]; then
+                uplink_set_roles "${UPLINK_PRIMARY}" "${iface}"
+            else
+                uplink_save_partial fallback "${iface}"
+            fi
             ;;
         *)
             _die "rol invalido: '${role}' (usa primary|fallback)"
