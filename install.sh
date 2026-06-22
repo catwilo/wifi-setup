@@ -476,6 +476,18 @@ install_tailscale
 configure_tailscale_inactive
 
 # ===========================================================================
+# ROL LAN PERSISTENTE (re-aplicar si install previa lo definio)  #7
+# ===========================================================================
+if [[ -f "${STATE_DIR}/lan-role.conf" ]]; then
+    echo ""
+    log "INFO" "rol LAN previo detectado -- re-aplicando para persistencia..."
+    # shellcheck source=/dev/null
+    ( source "${STATE_DIR}/lan-role.conf"
+      "${INSTALL_DIR}/bin/wifi" lan "${LAN_MODE}" "${LAN_IFACE}" "${LAN_UPSTREAM}" ) \
+        || log "WARN" "no se pudo re-aplicar rol LAN -- correr manual: wifi lan <modo>"
+fi
+
+# ===========================================================================
 # GUARDAR ESTADO
 # ===========================================================================
 mkdir -p "${STATE_DIR}"
