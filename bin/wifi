@@ -132,6 +132,38 @@ _cmd_list() {
 }
 
 # ---------------------------------------------------------------------------
+# cmd: networks   redes wifi GUARDADAS (no las del aire -- eso es "list")
+# Lista los bloques network={} de cada wpa_supplicant-<iface>.conf con su
+# estado (activa/disabled) y priority. Solo-lectura. Reusa _wpa_conf_path.
+# ---------------------------------------------------------------------------
+_cmd_networks() {
+    _source_common
+    source "${LIB_DIR}/net.sh"
+    source "${LIB_DIR}/detect.sh"
+    local found=0 ifc conf
+    while IFS= read -r ifc; do
+        [[ -n "${ifc}" ]] || continue
+        conf="$(_wpa_conf_path "${ifc}")"
+        [[ -f "${conf}" ]] || continue
+        found=1
+        echo "=== ${ifc} (${conf}) ==="
+        awk '
+            /^[[:space:]]*network[[:space:]]*=[[:space:]]*{/ { ssid=""; dis=0; pri=""; next }
+            /ssid[[:space:]]*=/ { s=$0; sub(/^[^"]*"/,"",s); sub(/".*$/,"",s); ssid=s }
+            /disabled[[:space:]]*=[[:space:]]*1/ { dis=1 }
+            /priority[[:space:]]*=/ { p=$0; sub(/^[^=]*=[[:space:]]*/,"",p); gsub(/[^0-9]/,"",p); pri=p }
+            /^[[:space:]]*}/ {
+                if (ssid != "") {
+                    st = dis ? "disabled" : "activa"
+                    printf "  %-28s %-9s prio=%s\n", ssid, st, (pri==""?"-":pri)
+                }
+            }
+        ' "${conf}"
+    done < <(detect_wifi_interfaces)
+    [[ "${found}" -eq 1 ]] || echo "no hay redes wifi guardadas (usa: sudo wifi add <ssid>)"
+}
+
+# ---------------------------------------------------------------------------
 # helper: elegir interfaz wifi (1 sola -> directo; 2+ sin arg -> preguntar)
 # uso: iface="$(_pick_wifi_iface "${arg_iface:-}")"
 # ---------------------------------------------------------------------------
@@ -736,6 +768,7 @@ ${_B}uso:${_X}
 
   wifi status                interfaces, rutas, conectividad, alcance SSH, Tailscale
   wifi list                  redes WiFi visibles
+  wifi networks              redes WiFi guardadas (activa/disabled/prioridad)
 
   sudo wifi add <ssid> [iface]   agregar red nueva (no borra las existentes)
   sudo wifi add <ssid> --all     agregarla en todas las interfaces wifi
@@ -783,6 +816,7 @@ case "${CMD}" in
     check|verify)        _cmd_check     "$@" ;;
     status)              _cmd_status        ;;
     list)                _cmd_list          ;;
+    networks)            _cmd_networks      ;;
     add)                  _cmd_add        "$@" ;;
     switch)               _cmd_switch     "$@" ;;
     useif)                _cmd_useif      "$@" ;;
