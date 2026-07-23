@@ -53,9 +53,23 @@ rm -f /etc/sysctl.d/99-wifi-setup-forward.conf
 sysctl -w net.ipv4.ip_forward=0 >/dev/null 2>/dev/null || true
 log "INFO" "ip_forward deshabilitado"
 
-# iptables (limpiar reglas de este proyecto)
-iptables -t nat -F POSTROUTING 2>/dev/null || true
-iptables -F FORWARD 2>/dev/null || true
+# NAT/FORWARD del proyecto: borrado dirigido (nunca -F, se lleva reglas ajenas)
+if [[ -f "${STATE_DIR}/install.state" ]]; then
+    source "${STATE_DIR}/install.state"
+    if [[ -n "${UPSTREAM_IFACE:-}" ]] && [[ -n "${PLAN_IFACE:-}" ]]; then
+        iptables -t nat -D POSTROUTING -o "${UPSTREAM_IFACE}" -j MASQUERADE 2>/dev/null || true
+        iptables -D FORWARD -i "${PLAN_IFACE}" -o "${UPSTREAM_IFACE}" -j ACCEPT 2>/dev/null || true
+        iptables -D FORWARD -i "${UPSTREAM_IFACE}" -o "${PLAN_IFACE}" -m state --state RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || true
+    fi
+fi
+if [[ -f "${STATE_DIR}/lan-role.conf" ]]; then
+    source "${STATE_DIR}/lan-role.conf"
+    if [[ -n "${LAN_UPSTREAM:-}" ]] && [[ -n "${LAN_IFACE:-}" ]]; then
+        iptables -t nat -D POSTROUTING -o "${LAN_UPSTREAM}" -j MASQUERADE 2>/dev/null || true
+        iptables -D FORWARD -i "${LAN_IFACE}" -o "${LAN_UPSTREAM}" -j ACCEPT 2>/dev/null || true
+        iptables -D FORWARD -i "${LAN_UPSTREAM}" -o "${LAN_IFACE}" -m state --state RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || true
+    fi
+fi
 iptables-save > /etc/iptables/rules.v4 2>/dev/null || true
 log "INFO" "reglas iptables limpiadas"
 
