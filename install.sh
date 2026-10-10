@@ -83,11 +83,8 @@ relaunch_byobu "${SCRIPT_DIR}/install.sh" "${INSTALL_MODE}"
 # Solo se ejecuta dentro de la ventana byobu (flag),
 # nunca en el pase interactivo previo al detach, para no duplicar trabajo.
 # ===========================================================================
-# Determinar si esta es la fase donde toca limpiar/mutar la red:
-# Solo dentro de la ventana byobu (flag=1) se ejecuta la fase de mutación.
-RUN_MUTATION=1  # dentro de byobu siempre se ejecuta la mutación
-
-if [[ "${RUN_MUTATION}" -eq 1 ]] && [[ -d "${INSTALL_DIR}" ]]; then
+# Limpieza automatica de instalacion previa (idempotente)
+if [[ -d "${INSTALL_DIR}" ]]; then
     log "INFO" "instalación previa detectada en ${INSTALL_DIR} — limpiando antes de reinstalar..."
 
     # Barrer restos de instaladores VIEJOS (wifi-setup@.service, wifi-panic, services/)
@@ -161,11 +158,6 @@ fi
 
 # --- Modo: SERVIDOR por defecto (upstream USB + plan 1.2.3.2 + forward a 1.2.3.1) ---
 # Override opcional vía argumento: install.sh server | client
-INSTALL_MODE="${1:-server}"
-case "${INSTALL_MODE}" in
-    server|client) ;;
-    *) INSTALL_MODE="server" ;;
-esac
 log "INFO" "modo: ${INSTALL_MODE^^} (override: 'wifi install client' para cliente)"
 
 # --- Interfaz WiFi upstream (USB preferida, si no la primera WiFi) ---
@@ -235,48 +227,46 @@ WIFI_SSID="${WIFI_SSID:-}"
 WIFI_PSK_LINE="${WIFI_PSK_LINE:-}"
 CHOSEN_MAC="${CHOSEN_MAC:-}"
 
-if true; then  # captura siempre (ya corremos dentro de byobu)
-    echo ""
-    # --- Credenciales WiFi: solo si no hay config previa ---
-    if [[ -f "${WPA_CONF}" ]]; then
-        log "INFO" "config WiFi existente en ${UPSTREAM_IFACE} — se conserva (sin preguntar)"
-    else
-        log "INFO" "no hay config WiFi previa — se requieren credenciales"
-        read -r -p "SSID de la red WiFi [cursed]: " WIFI_SSID || true
-        WIFI_SSID="${WIFI_SSID:-cursed}"
-        while true; do
-            read -r -s -p "Contraseña WPA (mín 8 caracteres): " WIFI_PASS || true
-            echo
-            [[ "${#WIFI_PASS}" -ge 8 ]] && break
-            echo "  error: mínimo 8 caracteres"
-        done
-        WIFI_PSK_LINE="$(wpa_passphrase "${WIFI_SSID}" "${WIFI_PASS}" 2>/dev/null \
-            | grep -E '^\s+psk=' | grep -v '#' | tr -d '\t ' || true)"
-        unset WIFI_PASS
-        [[ -n "${WIFI_PSK_LINE}" ]] || die "wpa_passphrase no generó PSK — verifica la contraseña"
-    fi
+echo ""
+# --- Credenciales WiFi: solo si no hay config previa ---
+if [[ -f "${WPA_CONF}" ]]; then
+    log "INFO" "config WiFi existente en ${UPSTREAM_IFACE} — se conserva (sin preguntar)"
+else
+    log "INFO" "no hay config WiFi previa — se requieren credenciales"
+    read -r -p "SSID de la red WiFi [cursed]: " WIFI_SSID || true
+    WIFI_SSID="${WIFI_SSID:-cursed}"
+    while true; do
+        read -r -s -p "Contraseña WPA (mín 8 caracteres): " WIFI_PASS || true
+        echo
+        [[ "${#WIFI_PASS}" -ge 8 ]] && break
+        echo "  error: mínimo 8 caracteres"
+    done
+    WIFI_PSK_LINE="$(wpa_passphrase "${WIFI_SSID}" "${WIFI_PASS}" 2>/dev/null \
+        | grep -E '^\s+psk=' | grep -v '#' | tr -d '\t ' || true)"
+    unset WIFI_PASS
+    [[ -n "${WIFI_PSK_LINE}" ]] || die "wpa_passphrase no generó PSK — verifica la contraseña"
+fi
 
-    # --- MAC: sugerir Windows-like (ENTER) o escribir una propia ---
-    MAC_FILE="${STATE_DIR}/mac-${UPSTREAM_IFACE}.mac"
-    if [[ -f "${MAC_FILE}" ]]; then
-        CHOSEN_MAC="$(cat "${MAC_FILE}")"
-        log "INFO" "MAC ya definida para ${UPSTREAM_IFACE}: ${CHOSEN_MAC} — se conserva"
-    else
-        SUGGESTED_MAC="$(suggest_windows_mac)"
-        echo ""
-        echo "  ── MAC de la interfaz upstream (${UPSTREAM_IFACE}) ─────────────────"
-        echo "  Sugerida (aspecto Windows, fija y persistente): ${SUGGESTED_MAC}"
-        echo "  ENTER = aceptar la sugerida   |   o escribe la tuya (AA:BB:CC:DD:EE:FF)"
-        echo ""
+# --- MAC: sugerir Windows-like (ENTER) o escribir una propia ---
+MAC_FILE="${STATE_DIR}/mac-${UPSTREAM_IFACE}.mac"
+if [[ -f "${MAC_FILE}" ]]; then
+    CHOSEN_MAC="$(cat "${MAC_FILE}")"
+    log "INFO" "MAC ya definida para ${UPSTREAM_IFACE}: ${CHOSEN_MAC} — se conserva"
+else
+    SUGGESTED_MAC="$(suggest_windows_mac)"
+    echo ""
+    echo "  ── MAC de la interfaz upstream (${UPSTREAM_IFACE}) ─────────────────"
+    echo "  Sugerida (aspecto Windows, fija y persistente): ${SUGGESTED_MAC}"
+    echo "  ENTER = aceptar la sugerida   |   o escribe la tuya (AA:BB:CC:DD:EE:FF)"
+    echo ""
+    read -r -p "MAC [${SUGGESTED_MAC}]: " MAC_INPUT || true
+    MAC_INPUT="${MAC_INPUT:-${SUGGESTED_MAC}}"
+    while ! CHOSEN_MAC="$(validate_mac "${MAC_INPUT}")"; do
+        echo "  error: formato inválido — usa AA:BB:CC:DD:EE:FF"
         read -r -p "MAC [${SUGGESTED_MAC}]: " MAC_INPUT || true
         MAC_INPUT="${MAC_INPUT:-${SUGGESTED_MAC}}"
-        while ! CHOSEN_MAC="$(validate_mac "${MAC_INPUT}")"; do
-            echo "  error: formato inválido — usa AA:BB:CC:DD:EE:FF"
-            read -r -p "MAC [${SUGGESTED_MAC}]: " MAC_INPUT || true
-            MAC_INPUT="${MAC_INPUT:-${SUGGESTED_MAC}}"
-        done
-        log "INFO" "MAC elegida para ${UPSTREAM_IFACE}: ${CHOSEN_MAC}"
-    fi
+    done
+    log "INFO" "MAC elegida para ${UPSTREAM_IFACE}: ${CHOSEN_MAC}"
 fi
 
 # ===========================================================================
