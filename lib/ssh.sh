@@ -5,7 +5,7 @@
 # Instalar y asegurar SSH — mejores prácticas
 # ---------------------------------------------------------------------------
 configure_ssh() {
-    log "INFO" "configurando SSH (puerto 22, hardening, persistente)..."
+    info "configurando SSH (puerto 22, hardening, persistente)..."
 
     # Instalar si no existe
     if ! command -v sshd >/dev/null 2>&1; then
@@ -76,9 +76,9 @@ EOF
 
     # Validar config antes de reiniciar — evita dejarnos sin SSH
     if ! sshd -t >/dev/null 2>&1; then
-        log "ERROR" "config SSH inválida — revirtiendo a backup..."
+        err "config SSH inválida — revirtiendo a backup..."
         # Mostrar el error exacto
-        sshd -t 2>&1 | while read -r line; do log "ERROR" "sshd -t: ${line}"; done
+        sshd -t 2>&1 | while read -r line; do err "sshd -t: ${line}"; done
         # Revertir el archivo problemático
         rm -f /etc/ssh/sshd_config.d/99-wifi-setup.conf
         die "sshd -t falló — se revirtió la config. Revisa el log anterior."
@@ -95,7 +95,7 @@ EOF
     # Verificar que quedó activo
     sleep 1
     if systemctl is-active ssh >/dev/null 2>&1 || systemctl is-active sshd >/dev/null 2>&1; then
-        log "INFO" "SSH activo en puerto 22, habilitado para arrancar en boot"
+        info "SSH activo en puerto 22, habilitado para arrancar en boot"
     else
         die "SSH no quedó activo después del restart — verifica: journalctl -u ssh -n 30"
     fi

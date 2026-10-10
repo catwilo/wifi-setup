@@ -14,7 +14,7 @@ SURVIVAL_FLAG="WIFI_SETUP_INWIN"
 # ---------------------------------------------------------------------------
 _mux_bin() {
     if command -v tmux >/dev/null 2>&1; then echo tmux; return 0; fi
-    log "INFO" "instalando tmux (no hay multiplexor)..."
+    info "instalando tmux (no hay multiplexor)..."
     apt-get update -qq >/dev/null 2>&1 || true
     apt-get install -y -qq tmux >/dev/null 2>&1
     command -v tmux >/dev/null 2>&1 && { echo tmux; return 0; }
@@ -63,8 +63,8 @@ relaunch_byobu() {
     fi
     inner+="; rc=\$?; echo; echo \"[wifi-setup] instalación finalizada (rc=\$rc). Esta ventana queda abierta — ciérrala con: exit  o  Ctrl-D\"; exec ${_fsh}"
 
-    log "INFO" "lanzando instalador en ventana ${mux} '${SURVIVAL_SESSION}:${SURVIVAL_WINDOW}'..."
-    log "INFO" "si cae el SSH, el proceso sigue vivo en la ventana; ciérrala manual al terminar."
+    info "lanzando instalador en ventana ${mux} '${SURVIVAL_SESSION}:${SURVIVAL_WINDOW}'..."
+    info "si cae el SSH, el proceso sigue vivo en la ventana; ciérrala manual al terminar."
 
     if "${engine}" has-session -t "${SURVIVAL_SESSION}" 2>/dev/null; then
         "${engine}" new-window -t "${SURVIVAL_SESSION}" -n "${SURVIVAL_WINDOW}" "${inner}"
@@ -88,15 +88,15 @@ setup_and_verify_upstream() {
     local iface="$1" mac_explicita="${2:-}"
     setup_upstream_dhcpcd "${iface}" "${mac_explicita}"
     dhcpcd -n "${iface}" 2>/dev/null || true
-    log "INFO" "verificando conectividad upstream (máx 25s)..."
+    info "verificando conectividad upstream (máx 25s)..."
     local waited=0
     while [[ "${waited}" -lt 25 ]]; do
         if ping -c1 -W2 1.1.1.1 >/dev/null 2>&1; then
-            log "INFO" "upstream con internet (IP del AP)"
+            info "upstream con internet (IP del AP)"
             return 0
         fi
         sleep 5; (( waited += 5 )) || true
     done
-    log "WARN" "upstream sin internet tras 25s — revisa WiFi/credenciales"
+    warn "upstream sin internet tras 25s — revisa WiFi/credenciales"
     return 1
 }

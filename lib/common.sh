@@ -25,19 +25,9 @@ fi
 # ---------------------------------------------------------------------------
 source "$(dirname "${BASH_SOURCE[0]}")/log.sh"
 
-# Shim de compatibilidad: mapea las llamadas log "NIVEL" al nuevo formato.
-log() {
-    local level="$1"; shift
-    case "${level}" in
-        INFO)  info "$*" ;;
-        WARN)  warn "$*" ;;
-        ERROR) err  "$*" ;;
-        *)     info "$*" ;;
-    esac
-}
 
 die() {
-    log "ERROR" "$*"
+    err "$*"
     exit 1
 }
 
@@ -75,7 +65,7 @@ backup_file() {
 rollback_network() {
     if [[ -f "$1" ]]; then
         cp -f "$1" "$2"
-        log "INFO" "rollback aplicado: $2"
+        info "rollback aplicado: $2"
     fi
 }
 
@@ -97,14 +87,14 @@ sweep_legacy_install() {
         systemctl stop    "${unit}" 2>/dev/null || true
         systemctl disable "${unit}" 2>/dev/null || true
         found=1
-        log "INFO" "unit legacy detenida/deshabilitada: ${unit}"
+        info "unit legacy detenida/deshabilitada: ${unit}"
     done < <(systemctl list-units --all --plain --no-legend 'wifi-setup@*' 2>/dev/null | awk '{print $1}')
 
     # Archivos de unit template legacy
     if compgen -G "/etc/systemd/system/wifi-setup@*.service" >/dev/null 2>&1; then
         rm -f /etc/systemd/system/wifi-setup@*.service
         found=1
-        log "INFO" "archivos de unit legacy eliminados: wifi-setup@*.service"
+        info "archivos de unit legacy eliminados: wifi-setup@*.service"
     fi
 
     # Binarios sueltos de esquemas viejos
@@ -120,12 +110,12 @@ sweep_legacy_install() {
     if [[ -d /opt/wifi-setup/services ]]; then
         rm -rf /opt/wifi-setup/services
         found=1
-        log "INFO" "carpeta legacy eliminada: /opt/wifi-setup/services"
+        info "carpeta legacy eliminada: /opt/wifi-setup/services"
     fi
 
     if [[ "${found}" -eq 1 ]]; then
         systemctl daemon-reload 2>/dev/null || true
-        log "INFO" "barrido de instalador legacy completado"
+        info "barrido de instalador legacy completado"
     fi
 }
 

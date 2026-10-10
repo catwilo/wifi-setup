@@ -6,11 +6,11 @@
 # ---------------------------------------------------------------------------
 install_tailscale() {
     if command -v tailscale >/dev/null 2>&1; then
-        log "INFO" "tailscale ya instalado: $(tailscale version 2>/dev/null | head -1)"
+        info "tailscale ya instalado: $(tailscale version 2>/dev/null | head -1)"
         return 0
     fi
 
-    log "INFO" "instalando Tailscale desde repositorio oficial..."
+    info "instalando Tailscale desde repositorio oficial..."
 
     # Método oficial: script de instalación firmado
     local ts_script="/tmp/wifisetup.tailscale-install.sh"
@@ -38,7 +38,7 @@ https://pkgs.tailscale.com/stable/debian bookworm main" \
         || die "falló el instalador de Tailscale — revisa el log: ${ts_script}"
 
     rm -f "${ts_script}"
-    log "INFO" "Tailscale instalado: $(tailscale version 2>/dev/null | head -1)"
+    info "Tailscale instalado: $(tailscale version 2>/dev/null | head -1)"
 }
 
 # ---------------------------------------------------------------------------
@@ -48,11 +48,11 @@ https://pkgs.tailscale.com/stable/debian bookworm main" \
 configure_tailscale_inactive() {
     # Habilitar el daemon para que arranque en boot, pero NO hacer up
     systemctl enable tailscaled 2>/dev/null \
-        || log "WARN" "no se pudo habilitar tailscaled en systemd"
+        || warn "no se pudo habilitar tailscaled en systemd"
     systemctl start tailscaled 2>/dev/null \
-        || log "WARN" "no se pudo iniciar tailscaled — puede que ya esté corriendo"
+        || warn "no se pudo iniciar tailscaled — puede que ya esté corriendo"
 
-    log "INFO" "tailscaled habilitado (daemon activo, túnel inactivo — requiere 'tailscale up')"
+    info "tailscaled habilitado (daemon activo, túnel inactivo — requiere 'tailscale up')"
 }
 
 # ---------------------------------------------------------------------------

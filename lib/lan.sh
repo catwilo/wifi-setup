@@ -52,12 +52,12 @@ _lan_ensure_dhcpcd_allows() {
     [[ -f "${conf}" ]] || return 0
     grep -qE "^allowinterfaces " "${conf}" || return 0
     if grep -qE "^allowinterfaces .*\b${iface}\b" "${conf}"; then
-        log "INFO" "lan: ${iface} ya permitido en dhcpcd allowinterfaces"
+        info "lan: ${iface} ya permitido en dhcpcd allowinterfaces"
         return 0
     fi
     cp -a "${conf}" "${conf}.wifisetup.bak" 2>/dev/null || true
     sed -i "s/^\(allowinterfaces .*\)$/\1 ${iface}/" "${conf}"
-    log "INFO" "lan: ${iface} anadido a dhcpcd allowinterfaces (era excluido)"
+    info "lan: ${iface} anadido a dhcpcd allowinterfaces (era excluido)"
 }
 
 # _lan_write_unit <iface> <mode> <upstream>
@@ -141,12 +141,12 @@ lan_set_role() {
     local ssh_if
     ssh_if="$(detect_ssh_iface 2>/dev/null || true)"
     if [[ -n "${ssh_if}" && "${ssh_if}" == "${iface}" ]]; then
-        log "WARN" "lan: ${iface} lleva la sesion SSH activa -- la config se aplica sin bajar la iface"
+        warn "lan: ${iface} lleva la sesion SSH activa -- la config se aplica sin bajar la iface"
     fi
 
     if [[ "${mode}" != "router" ]] && [[ -z "${upstream}" ]]; then
         upstream="$(detect_usb_wifi 2>/dev/null || true)"
-        [[ -n "${upstream}" ]] || log "WARN" "lan: no se detecto upstream wifi -- ${mode} sin NAT (solo conectividad)"
+        [[ -n "${upstream}" ]] || warn "lan: no se detecto upstream wifi -- ${mode} sin NAT (solo conectividad)"
     fi
     [[ "${mode}" == "router" ]] && upstream=""
 
@@ -157,9 +157,9 @@ LAN_MODE="${mode}"
 LAN_UPSTREAM="${upstream}"
 EOF
     chmod 600 "${LAN_CONF}"
-    log "INFO" "lan roles definidos: IFAZ=${iface} MODO=${mode} UPSTREAM=${upstream:-ninguno}"
+    info "lan roles definidos: IFAZ=${iface} MODO=${mode} UPSTREAM=${upstream:-ninguno}"
 
     [[ "${mode}" == "router" ]] && _lan_ensure_dhcpcd_allows "${iface}"
     _lan_write_unit "${iface}" "${mode}" "${upstream}"
-    log "INFO" "lan: rol '${mode}' aplicado y persistente en ${iface}"
+    info "lan: rol '${mode}' aplicado y persistente en ${iface}"
 }

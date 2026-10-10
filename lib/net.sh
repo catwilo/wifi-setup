@@ -70,7 +70,7 @@ detect_network_stack() {
 # Limpiar stack previo de forma segura
 # ---------------------------------------------------------------------------
 purge_network_stack() {
-    log "INFO" "detectando y limpiando stack de red previo..."
+    info "detectando y limpiando stack de red previo..."
 
     local services=(
         NetworkManager
@@ -81,22 +81,22 @@ purge_network_stack() {
     for svc in "${services[@]}"; do
         if systemctl list-unit-files "${svc}.service" 2>/dev/null | grep -q "${svc}"; then
             if systemctl is-active "${svc}" >/dev/null 2>&1; then
-                log "INFO" "deteniendo ${svc}..."
-                systemctl stop "${svc}" 2>/dev/null || log "WARN" "no se pudo detener ${svc}"
+                info "deteniendo ${svc}..."
+                systemctl stop "${svc}" 2>/dev/null || warn "no se pudo detener ${svc}"
             fi
             systemctl disable "${svc}" 2>/dev/null || true
             systemctl mask "${svc}" 2>/dev/null || true
-            log "INFO" "deshabilitado: ${svc}"
+            info "deshabilitado: ${svc}"
         fi
     done
 
     if pgrep -x dhcpcd >/dev/null 2>&1; then
-        log "INFO" "liberando leases dhcpcd previos (evita IPs duplicadas)..."
+        info "liberando leases dhcpcd previos (evita IPs duplicadas)..."
         dhcpcd -k 2>/dev/null || true
         sleep 1
     fi
     if pgrep -x dhclient >/dev/null 2>&1; then
-        log "INFO" "matando procesos dhclient sueltos..."
+        info "matando procesos dhclient sueltos..."
         pkill -x dhclient 2>/dev/null || true
         sleep 1
     fi
@@ -105,13 +105,13 @@ purge_network_stack() {
     rm -f /var/lib/dhcpcd/*.lease 2>/dev/null || true
 
     if [[ -d /etc/NetworkManager/system-connections ]]; then
-        log "INFO" "backup de conexiones NM previas  ${STATE_DIR}/nm-connections.bak/"
+        info "backup de conexiones NM previas  ${STATE_DIR}/nm-connections.bak/"
         mkdir -p "${STATE_DIR}/nm-connections.bak"
         cp -a /etc/NetworkManager/system-connections/. "${STATE_DIR}/nm-connections.bak/" 2>/dev/null || true
         rm -f /etc/NetworkManager/system-connections/*.nmconnection 2>/dev/null || true
     fi
 
-    log "INFO" "limpieza de stack previo completada"
+    info "limpieza de stack previo completada"
 }
 
 # ---------------------------------------------------------------------------
@@ -196,15 +196,15 @@ EOF
 
     chmod 600 "${conf}.new"
     mv -f "${conf}.new" "${conf}"
-    log "INFO" "wpa_supplicant config actualizada (red '${ssid}'): ${conf}"
+    info "wpa_supplicant config actualizada (red '${ssid}'): ${conf}"
 }
 
 # remove_wpa_network <iface> <ssid>  -- borra solo ese bloque, preserva el resto
 remove_wpa_network() {
     local iface="$1" ssid="$2" conf
     conf="$(_wpa_conf_path "${iface}")"
-    [[ -f "${conf}" ]] || { log "WARN" "no existe config para ${iface}"; return 1; }
-    wpa_network_exists "${iface}" "${ssid}" || { log "WARN" "ssid '${ssid}' no estaba en ${conf}"; return 1; }
+    [[ -f "${conf}" ]] || { warn "no existe config para ${iface}"; return 1; }
+    wpa_network_exists "${iface}" "${ssid}" || { warn "ssid '${ssid}' no estaba en ${conf}"; return 1; }
 
     backup_file "${conf}"
     {
@@ -214,7 +214,7 @@ remove_wpa_network() {
     } > "${conf}.new"
     chmod 600 "${conf}.new"
     mv -f "${conf}.new" "${conf}"
-    log "INFO" "red '${ssid}' eliminada de ${conf}"
+    info "red '${ssid}' eliminada de ${conf}"
 }
 
 # set_wpa_disabled <iface> <ssid> <on|off>
@@ -223,7 +223,7 @@ set_wpa_disabled() {
     local iface="$1" ssid="$2" mode="$3" conf
     conf="$(_wpa_conf_path "${iface}")"
     wpa_network_exists "${iface}" "${ssid}" \
-        || { log "ERROR" "ssid '${ssid}' no encontrado en ${conf}"; return 1; }
+        || { err "ssid '${ssid}' no encontrado en ${conf}"; return 1; }
 
     backup_file "${conf}"
 
@@ -249,12 +249,12 @@ set_wpa_disabled() {
             ' "${conf}" > "${conf}.new"
             ;;
         *)
-            log "ERROR" "modo invalido: ${mode} (usa on|off)"; return 1 ;;
+            err "modo invalido: ${mode} (usa on|off)"; return 1 ;;
     esac
 
     chmod 600 "${conf}.new"
     mv -f "${conf}.new" "${conf}"
-    log "INFO" "autoconnect '${ssid}' -> ${mode}"
+    info "autoconnect '${ssid}' -> ${mode}"
 }
 
 # set_wpa_freqlist <iface> <ssid> <freq_list_string>
@@ -263,7 +263,7 @@ set_wpa_freqlist() {
     local iface="$1" ssid="$2" freqs="$3" conf
     conf="$(_wpa_conf_path "${iface}")"
     wpa_network_exists "${iface}" "${ssid}" \
-        || { log "ERROR" "ssid '${ssid}' no encontrado en ${conf}"; return 1; }
+        || { err "ssid '${ssid}' no encontrado en ${conf}"; return 1; }
 
     backup_file "${conf}"
     awk -v target="ssid=\"${ssid}\"" -v freqs="${freqs}" '
@@ -280,7 +280,7 @@ set_wpa_freqlist() {
 
     chmod 600 "${conf}.new"
     mv -f "${conf}.new" "${conf}"
-    log "INFO" "freq_list de '${ssid}' -> ${freqs}"
+    info "freq_list de '${ssid}' -> ${freqs}"
 }
 
 # scan_ssid_frequencies <iface> <ssid>
@@ -306,9 +306,9 @@ enable_wpa_service() {
     systemctl restart "wpa_supplicant@${iface}.service"
     sleep 2
     if ! systemctl is-active "wpa_supplicant@${iface}.service" >/dev/null 2>&1; then
-        log "ERROR" "wpa_supplicant@${iface} no arranc"
+        err "wpa_supplicant@${iface} no arranc"
         journalctl -u "wpa_supplicant@${iface}.service" -n 20 --no-pager >&2
         die "fallo en wpa_supplicant  revisa el log anterior para el detalle exacto"
     fi
-    log "INFO" "wpa_supplicant@${iface} activo y persistente"
+    info "wpa_supplicant@${iface} activo y persistente"
 }

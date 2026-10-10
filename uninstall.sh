@@ -36,7 +36,7 @@ for svc in wifi-setup-forward wifi-setup-client; do
         systemctl stop "${svc}" 2>/dev/null || true
         systemctl disable "${svc}" 2>/dev/null || true
         rm -f "/etc/systemd/system/${svc}.service"
-        log "INFO" "servicio eliminado: ${svc}"
+        info "servicio eliminado: ${svc}"
     fi
 done
 systemctl daemon-reload
@@ -46,12 +46,12 @@ sweep_legacy_install
 
 # Symlinks
 rm -f "/usr/local/bin/wifi"
-log "INFO" "symlinks eliminados"
+info "symlinks eliminados"
 
 # sysctl
 rm -f /etc/sysctl.d/99-wifi-setup-forward.conf
 sysctl -w net.ipv4.ip_forward=0 >/dev/null 2>/dev/null || true
-log "INFO" "ip_forward deshabilitado"
+info "ip_forward deshabilitado"
 
 # NAT/FORWARD del proyecto: borrado dirigido (nunca -F, se lleva reglas ajenas)
 if [[ -f "${STATE_DIR}/install.state" ]]; then
@@ -71,25 +71,25 @@ if [[ -f "${STATE_DIR}/lan-role.conf" ]]; then
     fi
 fi
 iptables-save > /etc/iptables/rules.v4 2>/dev/null || true
-log "INFO" "reglas iptables limpiadas"
+info "reglas iptables limpiadas"
 
 # networkd configs
 rm -f /etc/systemd/network/10-wifi-setup-*.network
 systemctl restart systemd-networkd 2>/dev/null || true
-log "INFO" "configs networkd eliminadas"
+info "configs networkd eliminadas"
 
 # SSH config propia (no toca sshd_config base)
 rm -f /etc/ssh/sshd_config.d/99-wifi-setup.conf
 systemctl restart ssh 2>/dev/null || systemctl restart sshd 2>/dev/null || true
-log "INFO" "config SSH wifi-setup eliminada (sshd_config base intacto)"
+info "config SSH wifi-setup eliminada (sshd_config base intacto)"
 
 echo ""
 read -r -p "¿Eliminar también /opt/wifi-setup (logs, state, config)? [s/N]: " DEL_DATA
 if [[ "${DEL_DATA}" =~ ^[sS]$ ]]; then
     rm -rf /opt/wifi-setup
-    log "INFO" "/opt/wifi-setup eliminado"
+    info "/opt/wifi-setup eliminado"
 else
-    log "INFO" "/opt/wifi-setup preservado"
+    info "/opt/wifi-setup preservado"
 fi
 
 echo ""

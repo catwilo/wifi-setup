@@ -31,7 +31,7 @@ UPLINK_FALLBACK="${fallback}"
 UPLINK_ACTIVE="${primary}"
 EOF
     chmod 600 "${UPLINK_CONF}"
-    log "INFO" "uplink roles definidos: PRIMARY=${primary} FALLBACK=${fallback}"
+    info "uplink roles definidos: PRIMARY=${primary} FALLBACK=${fallback}"
 }
 
 # ---------------------------------------------------------------------------
@@ -51,18 +51,18 @@ uplink_activate() {
     local ssh_if
     ssh_if="$(detect_ssh_iface 2>/dev/null || true)"
 
-    log "INFO" "uplink: activando ${target}, apagando ${other}"
-    dhcpcd -n "${target}" 2>/dev/null || log "WARN" "dhcpcd fallo en ${target}"
+    info "uplink: activando ${target}, apagando ${other}"
+    dhcpcd -n "${target}" 2>/dev/null || warn "dhcpcd fallo en ${target}"
 
     if [[ -n "${ssh_if}" && "${other}" == "${ssh_if}" ]]; then
-        log "WARN" "uplink: NO apago ${other} (lleva la sesion SSH activa)"
+        warn "uplink: NO apago ${other} (lleva la sesion SSH activa)"
     else
         dhcpcd -k "${other}" 2>/dev/null || true
         ip link set "${other}" down 2>/dev/null || true
     fi
 
     sed -i "s/^UPLINK_ACTIVE=.*/UPLINK_ACTIVE=\"${target}\"/" "${UPLINK_CONF}"
-    log "INFO" "uplink: activo ahora = ${target}"
+    info "uplink: activo ahora = ${target}"
 }
 
 # ---------------------------------------------------------------------------
@@ -98,13 +98,13 @@ uplink_on_carrier_event() {
 
     if [[ "${reason}" == "NOCARRIER" ]]; then
         if _uplink_has_internet "${iface}"; then
-            log "INFO" "uplink: ${UPLINK_ACTIVE} sin carrier momentaneo pero internet OK tras confirmar -- sin accion"
+            info "uplink: ${UPLINK_ACTIVE} sin carrier momentaneo pero internet OK tras confirmar -- sin accion"
             return 0
         fi
         local other=""
         [[ "${UPLINK_ACTIVE}" == "${UPLINK_PRIMARY}" ]] && other="${UPLINK_FALLBACK}"
         [[ "${UPLINK_ACTIVE}" == "${UPLINK_FALLBACK}" ]] && other="${UPLINK_PRIMARY}"
-        log "WARN" "uplink: ${UPLINK_ACTIVE} sin carrier e internet no confirmado -- activando ${other}"
+        warn "uplink: ${UPLINK_ACTIVE} sin carrier e internet no confirmado -- activando ${other}"
         uplink_activate "${other}"
     fi
     # CARRIER (recuperacion) en la interfaz activa: no-op, ya esta activa.
@@ -144,6 +144,6 @@ UPLINK_FALLBACK="${UPLINK_FALLBACK:-}"
 UPLINK_ACTIVE="${UPLINK_ACTIVE:-}"
 EOF2
     chmod 600 "${UPLINK_CONF}"
-    log "INFO" "uplink ${role} parcial guardado: ${iface} (el otro rol aun no definido)"
+    info "uplink ${role} parcial guardado: ${iface} (el otro rol aun no definido)"
 }
 

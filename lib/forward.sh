@@ -22,7 +22,7 @@ apply_static_ip() {
             || die "no se pudo agregar ruta default via ${gw} — verifica que ${gw} sea alcanzable en ${iface}"
     fi
 
-    log "INFO" "IP estática aplicada: ${iface} → ${cidr} gw=${gw:-none}"
+    info "IP estática aplicada: ${iface} → ${cidr} gw=${gw:-none}"
 }
 
 # ---------------------------------------------------------------------------
@@ -39,7 +39,7 @@ enable_ip_forward() {
 net.ipv4.ip_forward = 1
 EOF
     sysctl -p "${sysctl_conf}" >/dev/null
-    log "INFO" "ip_forward habilitado y persistente (${sysctl_conf})"
+    info "ip_forward habilitado y persistente (${sysctl_conf})"
 }
 
 # ---------------------------------------------------------------------------
@@ -78,7 +78,7 @@ apply_nat() {
         || die "no se pudo guardar reglas iptables en /etc/iptables/rules.v4"
 
     systemctl enable netfilter-persistent 2>/dev/null || true
-    log "INFO" "NAT MASQUERADE activo: ${plan} → ${upstream}, reglas persistidas"
+    info "NAT MASQUERADE activo: ${plan} → ${upstream}, reglas persistidas"
 }
 
 # ---------------------------------------------------------------------------
@@ -101,7 +101,7 @@ Gateway=${gw}
 DNS=1.1.1.1
 DNS=8.8.8.8
 EOF
-    log "INFO" "networkd config estática escrita para ${iface}"
+    info "networkd config estática escrita para ${iface}"
 }
 
 # ---------------------------------------------------------------------------
@@ -136,10 +136,10 @@ validate_mac() {
     # Primer octeto: bit0=multicast, bit1=local-admin
     local first="0x${mac%%:*}"
     if (( (first & 0x01) != 0 )); then
-        log "WARN" "MAC ${mac} es MULTICAST (bit I/G) — inusual para una NIC, puede no levantar"
+        warn "MAC ${mac} es MULTICAST (bit I/G) — inusual para una NIC, puede no levantar"
     fi
     if (( (first & 0x02) != 0 )); then
-        log "WARN" "MAC ${mac} es de administración LOCAL — se ve aleatoria/falsa, no de fábrica"
+        warn "MAC ${mac} es de administración LOCAL — se ve aleatoria/falsa, no de fábrica"
     fi
     echo "${mac}"
 }
@@ -163,7 +163,7 @@ generate_persistent_mac() {
         mkdir -p "${STATE_DIR}"
         echo "${mac}" > "${mac_file}"
         chmod 600 "${mac_file}"
-        log "INFO" "MAC explícita persistida para ${iface}: ${mac} → ${mac_file}"
+        info "MAC explícita persistida para ${iface}: ${mac} → ${mac_file}"
         echo "${mac}"
         return 0
     fi
@@ -177,7 +177,7 @@ generate_persistent_mac() {
     mkdir -p "${STATE_DIR}"
     echo "${mac}" > "${mac_file}"
     chmod 600 "${mac_file}"
-    log "INFO" "MAC persistente generada para ${iface}: ${mac} → ${mac_file}"
+    info "MAC persistente generada para ${iface}: ${mac} → ${mac_file}"
     echo "${mac}"
 }
 
@@ -220,13 +220,13 @@ PermanentMACAddress=${perm}
 MACAddress=${mac}
 Name=${fixed_name}
 EOF
-    log "INFO" "MAC link escrito: ${iface} perm=${perm} -> ${mac}"
+    info "MAC link escrito: ${iface} perm=${perm} -> ${mac}"
 
     # Aplicar YA en caliente (sin esperar reboot)
     ip link set "${iface}" down 2>/dev/null || true
     ip addr flush dev "${iface}" 2>/dev/null || true
     ip link set "${iface}" address "${mac}" 2>/dev/null \
-        || log "WARN" "no se pudo aplicar MAC ${mac} en caliente a ${iface}"
+        || warn "no se pudo aplicar MAC ${mac} en caliente a ${iface}"
     ip link set "${iface}" up 2>/dev/null || true
     sleep 1
 }
@@ -267,7 +267,7 @@ setup_upstream_dhcpcd() {
     sleep 1
     dhcpcd "${iface}" 2>/dev/null || true
 
-    log "INFO" "upstream ${iface} configurado vía dhcpcd (subred/gateway reales del AP)"
+    info "upstream ${iface} configurado vía dhcpcd (subred/gateway reales del AP)"
 }
 
 
@@ -310,7 +310,7 @@ set_mac_hot() {
     case "${arg}" in
         random|windows|RANDOM|WINDOWS)
             new_mac="$(suggest_windows_mac)"
-            log "INFO" "MAC generada (Windows-like): ${new_mac}"
+            info "MAC generada (Windows-like): ${new_mac}"
             ;;
         *)
             new_mac="$(validate_mac "${arg}")" \
@@ -332,7 +332,7 @@ set_mac_hot() {
     local prev_persisted=""
     [[ "${old_mac_file_existed}" -eq 1 ]] && prev_persisted="$(cat "${mac_file}")"
 
-    log "INFO" "cambiando MAC de ${iface}: ${old_mac} → ${new_mac}"
+    info "cambiando MAC de ${iface}: ${old_mac} → ${new_mac}"
 
     # 3. Persistir nueva MAC + reescribir .network si existe (preservar IP/gw)
     mkdir -p "${STATE_DIR}"
@@ -349,7 +349,7 @@ set_mac_hot() {
     restored_ip="$(ip addr show "${iface}" 2>/dev/null | awk '/inet /{print $2}' | head -1)"
     ip link set "${iface}" down 2>/dev/null || true
     if ! ip link set "${iface}" address "${new_mac}" 2>/dev/null; then
-        log "ERROR" "el driver/interfaz rechazó la MAC ${new_mac} — revirtiendo"
+        err "el driver/interfaz rechazó la MAC ${new_mac} — revirtiendo"
         ip link set "${iface}" address "${old_mac}" 2>/dev/null || true
         ip link set "${iface}" up 2>/dev/null || true
         [[ -n "${old_net_backup}" ]] && cp -f "${old_net_backup}" "${net_file}"
@@ -367,7 +367,7 @@ set_mac_hot() {
     dhcpcd "${iface}" 2>/dev/null || true
 
     # 5. Verificar conectividad; rollback si falla
-    log "INFO" "verificando conectividad tras cambio de MAC (máx 25s)..."
+    info "verificando conectividad tras cambio de MAC (máx 25s)..."
     local waited=0 ok=0
     while [[ "${waited}" -lt 25 ]]; do
         if ping -c1 -W2 1.1.1.1 >/dev/null 2>&1; then ok=1; break; fi
@@ -376,14 +376,14 @@ set_mac_hot() {
 
     if [[ "${ok}" -eq 1 ]]; then
         rm -f "${old_net_backup}" 2>/dev/null || true
-        log "INFO" "MAC cambiada y verificada: ${iface} → ${new_mac} (persistente)"
+        info "MAC cambiada y verificada: ${iface} → ${new_mac} (persistente)"
         show_upstream_config "${iface}"
         echo "ok: MAC de ${iface} ahora es ${new_mac} — persistente y con internet"
         return 0
     fi
 
     # Rollback completo
-    log "WARN" "sin internet tras el cambio — revirtiendo a ${old_mac}..."
+    warn "sin internet tras el cambio — revirtiendo a ${old_mac}..."
     ip link set "${iface}" down 2>/dev/null || true
     ip link set "${iface}" address "${old_mac}" 2>/dev/null || true
     ip link set "${iface}" up 2>/dev/null || true

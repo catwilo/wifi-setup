@@ -55,15 +55,15 @@ _candidate="${HOME}/unix-toolkit-tools/wifi-setup"
 if [[ "$(realpath "${SCRIPT_DIR}")" == "$(realpath "${INSTALL_DIR}")" ]]; then
     if [[ -d "${_candidate}" ]] && [[ -f "${_candidate}/install.sh" ]] &&        [[ "$(realpath "${_candidate}")" != "$(realpath "${INSTALL_DIR}")" ]]; then
         _REPO_SOURCE="${_candidate}"
-        log "INFO" "auto-update: sincronizando desde repo ${_REPO_SOURCE}..."
+        info "auto-update: sincronizando desde repo ${_REPO_SOURCE}..."
         cp -a "${_REPO_SOURCE}/bin/." "${INSTALL_DIR}/bin/"
         cp -a "${_REPO_SOURCE}/lib/." "${INSTALL_DIR}/lib/"
         cp -a "${_REPO_SOURCE}/"*.sh "${INSTALL_DIR}/"
         chmod +x "${INSTALL_DIR}"/bin/* "${INSTALL_DIR}"/*.sh
-        log "INFO" "auto-update: archivos sincronizados — continuando con versión actualizada"
+        info "auto-update: archivos sincronizados — continuando con versión actualizada"
         exec "${INSTALL_DIR}/install.sh" "$@"
     else
-        log "INFO" "repo fuente no encontrado en ${_candidate} — usando versión instalada"
+        info "repo fuente no encontrado en ${_candidate} — usando versión instalada"
     fi
 fi
 
@@ -85,7 +85,7 @@ relaunch_byobu "${SCRIPT_DIR}/install.sh" "${INSTALL_MODE}"
 # ===========================================================================
 # Limpieza automatica de instalacion previa (idempotente)
 if [[ -d "${INSTALL_DIR}" ]]; then
-    log "INFO" "instalación previa detectada en ${INSTALL_DIR} — limpiando antes de reinstalar..."
+    info "instalación previa detectada en ${INSTALL_DIR} — limpiando antes de reinstalar..."
 
     # Barrer restos de instaladores VIEJOS (wifi-setup@.service, wifi-panic, services/)
     sweep_legacy_install
@@ -105,7 +105,7 @@ if [[ -d "${INSTALL_DIR}" ]]; then
         # Solo eliminar si apunta a nuestro INSTALL_DIR (no tocar binarios ajenos)
         if [[ -L "${old_link}" ]] && [[ "$(readlink -f "${old_link}" 2>/dev/null)" == "${INSTALL_DIR}"* ]]; then
             rm -f "${old_link}"
-            log "INFO" "symlink eliminado: ${old_link}"
+            info "symlink eliminado: ${old_link}"
         fi
     done
 
@@ -127,7 +127,7 @@ if [[ -d "${INSTALL_DIR}" ]]; then
     # Limpiar sysctl del proyecto (sin aplicar — se reescribe durante install)
     rm -f /etc/sysctl.d/99-wifi-setup-forward.conf
 
-    log "INFO" "limpieza completada — procediendo con instalación limpia"
+    info "limpieza completada — procediendo con instalación limpia"
 fi
 
 # Mantenemos set -e activo. Solo los `read` se toleran con `|| true`.
@@ -145,30 +145,30 @@ echo ""
 # AUTO-DETECCIÓN DE CONTEXTO (no destructivo — solo lee)
 # Se hace ANTES de purgar la red para capturar subred/gw vivos.
 # ===========================================================================
-log "INFO" "auto-detectando contexto..."
+info "auto-detectando contexto..."
 
 # --- Sesión SSH actual (para no cortar la ruta de acceso a ciegas) ---
 SSH_IFACE="$(detect_ssh_iface 2>/dev/null || true)"
 SSH_LOCAL_IP="$(detect_ssh_local_ip 2>/dev/null || true)"
 if [[ -n "${SSH_IFACE}" ]]; then
-    log "INFO" "sesión SSH entra por: ${SSH_IFACE} (ip local ${SSH_LOCAL_IP:-?})"
+    info "sesión SSH entra por: ${SSH_IFACE} (ip local ${SSH_LOCAL_IP:-?})"
 else
-    log "INFO" "no se detectó sesión SSH (consola local o vía tailscale) — continuo"
+    info "no se detectó sesión SSH (consola local o vía tailscale) — continuo"
 fi
 
 # --- Modo: SERVIDOR por defecto (upstream USB + plan 1.2.3.2 + forward a 1.2.3.1) ---
 # Override opcional vía argumento: install.sh server | client
-log "INFO" "modo: ${INSTALL_MODE^^} (override: 'wifi install client' para cliente)"
+info "modo: ${INSTALL_MODE^^} (override: 'wifi install client' para cliente)"
 
 # --- Interfaz WiFi upstream (USB preferida, si no la primera WiFi) ---
 if UPSTREAM_IFACE="$(detect_usb_wifi 2>/dev/null)"; then
-    log "INFO" "WiFi USB detectada: ${UPSTREAM_IFACE}"
+    info "WiFi USB detectada: ${UPSTREAM_IFACE}"
 else
     mapfile -t WIFI_LIST < <(detect_wifi_interfaces)
     [[ "${#WIFI_LIST[@]}" -gt 0 ]] \
         || die "no se encontró interfaz WiFi — conecta el adaptador USB y reintenta"
     UPSTREAM_IFACE="${WIFI_LIST[0]}"
-    log "INFO" "WiFi upstream (autoseleccionada): ${UPSTREAM_IFACE}"
+    info "WiFi upstream (autoseleccionada): ${UPSTREAM_IFACE}"
 fi
 WIFI_IFACE="${UPSTREAM_IFACE}"
 
@@ -182,13 +182,13 @@ if [[ "${INSTALL_MODE}" == "server" ]]; then
     [[ -n "${PLAN_IFACE}" ]] \
         || die "no se detectó interfaz plan (ethernet hacia cliente) — verifica: ip link show"
     validate_interface "${PLAN_IFACE}"
-    log "INFO" "interfaz plan: ${PLAN_IFACE}"
+    info "interfaz plan: ${PLAN_IFACE}"
 else
     STATIC_IFACE="$(detect_plan_interface 2>/dev/null || true)"
     [[ -n "${STATIC_IFACE}" ]] \
         || die "no se detectó interfaz hacia servidor — verifica: ip link show"
     validate_interface "${STATIC_IFACE}"
-    log "INFO" "interfaz estática: ${STATIC_IFACE}"
+    info "interfaz estática: ${STATIC_IFACE}"
 fi
 
 # --- IPs de la red plan (fijas por diseño) ---
@@ -207,11 +207,11 @@ fi
 # ===========================================================================
 if [[ -n "${SSH_IFACE}" ]]; then
     if [[ "${SSH_IFACE}" == "${UPSTREAM_IFACE}" ]]; then
-        log "WARN" "SSH entra por el upstream ${UPSTREAM_IFACE} — se reconfigurará vía dhcpcd."
-        log "WARN" "byobu mantiene vivo el proceso; reconecta a la IP del AP si cae."
-        log "WARN" "RECOMENDADO: reinstala entrando por la red plan (1.2.3.x) o Tailscale, no por la USB."
+        warn "SSH entra por el upstream ${UPSTREAM_IFACE} — se reconfigurará vía dhcpcd."
+        warn "byobu mantiene vivo el proceso; reconecta a la IP del AP si cae."
+        warn "RECOMENDADO: reinstala entrando por la red plan (1.2.3.x) o Tailscale, no por la USB."
     elif [[ "${INSTALL_MODE}" == "server" && "${SSH_IFACE}" == "${PLAN_IFACE}" ]]; then
-        log "INFO" "SSH entra por el plan ${PLAN_IFACE} (estable) — no se interrumpe al reconfigurar la USB."
+        info "SSH entra por el plan ${PLAN_IFACE} (estable) — no se interrumpe al reconfigurar la USB."
     fi
 fi
 
@@ -230,9 +230,9 @@ CHOSEN_MAC="${CHOSEN_MAC:-}"
 echo ""
 # --- Credenciales WiFi: solo si no hay config previa ---
 if [[ -f "${WPA_CONF}" ]]; then
-    log "INFO" "config WiFi existente en ${UPSTREAM_IFACE} — se conserva (sin preguntar)"
+    info "config WiFi existente en ${UPSTREAM_IFACE} — se conserva (sin preguntar)"
 else
-    log "INFO" "no hay config WiFi previa — se requieren credenciales"
+    info "no hay config WiFi previa — se requieren credenciales"
     read -r -p "SSID de la red WiFi [cursed]: " WIFI_SSID || true
     WIFI_SSID="${WIFI_SSID:-cursed}"
     while true; do
@@ -251,7 +251,7 @@ fi
 MAC_FILE="${STATE_DIR}/mac-${UPSTREAM_IFACE}.mac"
 if [[ -f "${MAC_FILE}" ]]; then
     CHOSEN_MAC="$(cat "${MAC_FILE}")"
-    log "INFO" "MAC ya definida para ${UPSTREAM_IFACE}: ${CHOSEN_MAC} — se conserva"
+    info "MAC ya definida para ${UPSTREAM_IFACE}: ${CHOSEN_MAC} — se conserva"
 else
     SUGGESTED_MAC="$(suggest_windows_mac)"
     echo ""
@@ -266,7 +266,7 @@ else
         read -r -p "MAC [${SUGGESTED_MAC}]: " MAC_INPUT || true
         MAC_INPUT="${MAC_INPUT:-${SUGGESTED_MAC}}"
     done
-    log "INFO" "MAC elegida para ${UPSTREAM_IFACE}: ${CHOSEN_MAC}"
+    info "MAC elegida para ${UPSTREAM_IFACE}: ${CHOSEN_MAC}"
 fi
 
 # ===========================================================================
@@ -305,7 +305,7 @@ fi
 # LIMPIAR STACK PREVIO
 # ===========================================================================
 echo ""
-log "INFO" "limpiando stack de red previo..."
+info "limpiando stack de red previo..."
 purge_network_stack
 
 # ===========================================================================
@@ -313,21 +313,21 @@ purge_network_stack
 # ===========================================================================
 if [[ ! -f /etc/resolv.conf.head ]] || ! grep -q "1.1.1.1" /etc/resolv.conf.head 2>/dev/null; then
     printf "nameserver 1.1.1.1\nnameserver 8.8.8.8\n" > /etc/resolv.conf.head
-    log "INFO" "resolv.conf.head configurado con DNS estable (1.1.1.1 / 8.8.8.8)"
+    info "resolv.conf.head configurado con DNS estable (1.1.1.1 / 8.8.8.8)"
 fi
 
 # ===========================================================================
 # INSTALAR ARCHIVOS
 # ===========================================================================
-log "INFO" "instalando archivos en ${INSTALL_DIR}..."
+info "instalando archivos en ${INSTALL_DIR}..."
 require_dirs
 if [[ "$(realpath "${SCRIPT_DIR}")" != "$(realpath "${INSTALL_DIR}")" ]]; then
     cp -a "${SCRIPT_DIR}/bin/." "${INSTALL_DIR}/bin/"
     cp -a "${SCRIPT_DIR}/lib/." "${INSTALL_DIR}/lib/"
     cp -a "${SCRIPT_DIR}/"*.sh "${INSTALL_DIR}/"
-    log "INFO" "archivos copiados desde ${SCRIPT_DIR}"
+    info "archivos copiados desde ${SCRIPT_DIR}"
 else
-    log "INFO" "corriendo desde ${INSTALL_DIR} — copia omitida (ya en sitio)"
+    info "corriendo desde ${INSTALL_DIR} — copia omitida (ya en sitio)"
 fi
 chmod +x "${INSTALL_DIR}"/bin/*
 chmod +x "${INSTALL_DIR}"/*.sh
@@ -339,7 +339,7 @@ if [[ -f "${SCRIPT_DIR}/dhcpcd-hooks/90-wifi-setup-uplink" ]]; then
     for _hd in /lib/dhcpcd/dhcpcd-hooks /usr/lib/dhcpcd/dhcpcd-hooks; do
         [[ -d "${_hd}" ]] || continue
         cp -a "${SCRIPT_DIR}/dhcpcd-hooks/90-wifi-setup-uplink" "${_hd}/90-wifi-setup-uplink"
-        log "INFO" "hook uplink instalado en ${_hd}"
+        info "hook uplink instalado en ${_hd}"
     done
 fi
 
@@ -353,7 +353,7 @@ configure_ssh
 # LEVANTAR WiFi + DHCP (upstream)
 # ===========================================================================
 echo ""
-log "INFO" "levantando interfaz WiFi ${UPSTREAM_IFACE}..."
+info "levantando interfaz WiFi ${UPSTREAM_IFACE}..."
 enable_wpa_service "${UPSTREAM_IFACE}"
 
 # systemd-networkd se usa SOLO para el plan (enp4s0 estático). El upstream
@@ -365,9 +365,9 @@ systemctl enable systemd-networkd
 # Sin restart de networkd (eso cortaba el SSH). No se fuerza ninguna IP.
 if setup_and_verify_upstream "${UPSTREAM_IFACE}" "${CHOSEN_MAC:-}"; then
     IP_CHECK="$(ip -o -4 addr show "${UPSTREAM_IFACE}" 2>/dev/null | awk '{print $4}' | head -1 || true)"
-    log "INFO" "${UPSTREAM_IFACE} → IP: ${IP_CHECK:-?} (del AP, con internet)"
+    info "${UPSTREAM_IFACE} → IP: ${IP_CHECK:-?} (del AP, con internet)"
 else
-    log "WARN" "upstream sin internet — continúa el setup, revisa WiFi"
+    warn "upstream sin internet — continúa el setup, revisa WiFi"
 fi
 
 # ===========================================================================
@@ -375,7 +375,7 @@ fi
 # ===========================================================================
 if [[ "${INSTALL_MODE}" == "server" ]]; then
     echo ""
-    log "INFO" "configurando IP plan y forwarding..."
+    info "configurando IP plan y forwarding..."
 
     apply_static_ip "${PLAN_IFACE}" "${PLAN_CIDR}"
     write_networkd_static "${PLAN_IFACE}" "${PLAN_CIDR}" ""
@@ -418,7 +418,7 @@ EOF
     systemctl daemon-reload
     systemctl enable wifi-setup-forward
     systemctl restart wifi-setup-forward
-    log "INFO" "wifi-setup-forward activo y persistente"
+    info "wifi-setup-forward activo y persistente"
 fi
 
 # ===========================================================================
@@ -426,7 +426,7 @@ fi
 # ===========================================================================
 if [[ "${INSTALL_MODE}" == "client" ]]; then
     echo ""
-    log "INFO" "configurando IP estática cliente..."
+    info "configurando IP estática cliente..."
 
     apply_static_ip "${STATIC_IFACE}" "${STATIC_CIDR}" "${GATEWAY}"
     write_networkd_static "${STATIC_IFACE}" "${STATIC_CIDR}" "${GATEWAY}"
@@ -455,7 +455,7 @@ EOF
     systemctl daemon-reload
     systemctl enable wifi-setup-client
     systemctl restart wifi-setup-client
-    log "INFO" "wifi-setup-client activo y persistente"
+    info "wifi-setup-client activo y persistente"
 fi
 
 # ===========================================================================
@@ -470,11 +470,11 @@ configure_tailscale_inactive
 # ===========================================================================
 if [[ -f "${STATE_DIR}/lan-role.conf" ]]; then
     echo ""
-    log "INFO" "rol LAN previo detectado -- re-aplicando para persistencia..."
+    info "rol LAN previo detectado -- re-aplicando para persistencia..."
     # shellcheck source=/dev/null
     ( source "${STATE_DIR}/lan-role.conf"
       "${INSTALL_DIR}/bin/wifi" lan "${LAN_MODE}" "${LAN_IFACE}" "${LAN_UPSTREAM}" ) \
-        || log "WARN" "no se pudo re-aplicar rol LAN -- correr manual: wifi lan <modo>"
+        || warn "no se pudo re-aplicar rol LAN -- correr manual: wifi lan <modo>"
 fi
 
 # ===========================================================================
@@ -505,7 +505,7 @@ chmod 600 "${STATE_DIR}/install.state"
 # VERIFICACIÓN FINAL
 # ===========================================================================
 echo ""
-log "INFO" "ejecutando verificación final..."
+info "ejecutando verificación final..."
 sleep 2
 bash "${SCRIPT_DIR}/checks.sh" "${INSTALL_MODE}" || true
 

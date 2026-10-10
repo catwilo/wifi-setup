@@ -75,7 +75,7 @@ if [[ -f "${STATE_FILE}" ]]; then
     # shellcheck source=/dev/null
     source "${STATE_FILE}"
 else
-    log "WARN" "no se encontró ${STATE_FILE} — ejecuta install.sh primero"
+    warn "no se encontró ${STATE_FILE} — ejecuta install.sh primero"
 fi
 
 MODE="${MODE:-${INSTALL_MODE:-}}"

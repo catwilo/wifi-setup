@@ -253,7 +253,7 @@ _cmd_add() {
 
     configure_wpa "${iface}" "${ssid}" "${psk_line}" ""
     systemctl restart "wpa_supplicant@${iface}" 2>/dev/null || true
-    log "INFO" "red '${ssid}' agregada en ${iface}"
+    info "red '${ssid}' agregada en ${iface}"
     echo "ok: '${ssid}' agregada en ${iface}"
 }
 
@@ -285,7 +285,7 @@ _cmd_switch() {
 
     set_wpa_disabled "${iface}" "${ssid}" "on"
     systemctl restart "wpa_supplicant@${iface}" 2>/dev/null || true
-    log "INFO" "switch a '${ssid}' en ${iface}"
+    info "switch a '${ssid}' en ${iface}"
     echo "ok: cambiando a '${ssid}' en ${iface}  verifica con: wifi status"
 }
 
@@ -323,17 +323,17 @@ _cmd_useif() {
     sleep 5
 
     if ! ping -c1 -W5 1.1.1.1 >/dev/null 2>&1; then
-        log "WARN" "${new_iface} sin conectividad  no se toca ${old_iface:-la interfaz vieja}"
+        warn "${new_iface} sin conectividad  no se toca ${old_iface:-la interfaz vieja}"
         _die "no se pudo conectar por ${new_iface}  ${old_iface:-la interfaz anterior} sigue activa, nada cambio"
     fi
 
-    log "INFO" "conectividad OK en ${new_iface}"
+    info "conectividad OK en ${new_iface}"
 
     if [[ -n "${old_iface}" ]]; then
         echo "apagando ${old_iface} (la nueva ya funciona)..."
         systemctl stop "wpa_supplicant@${old_iface}" 2>/dev/null || true
         dhcpcd -k "${old_iface}" 2>/dev/null || true
-        log "INFO" "useif: ${old_iface} -> ${new_iface}"
+        info "useif: ${old_iface} -> ${new_iface}"
     fi
 
     echo "ok: interfaz activa ahora es ${new_iface}  verifica con: wifi status"
@@ -482,16 +482,16 @@ _cmd_passwd() {
     systemctl restart "wpa_supplicant@${iface}" 2>/dev/null || true
     sleep 5
 
-    log "INFO" "password updated for ssid '${ssid}' on ${iface}"
+    info "password updated for ssid '${ssid}' on ${iface}"
 
     if ! ping -c1 -W5 1.1.1.1 >/dev/null 2>&1; then
-        log "WARN" "connectivity check failed  rolling back ${iface} config"
+        warn "connectivity check failed  rolling back ${iface} config"
         rollback_network "${conf}.rollback" "${conf}"
         systemctl restart "wpa_supplicant@${iface}" 2>/dev/null || true
         _die "sin conectividad tras el cambio  config restaurada"
     fi
 
-    log "INFO" "connectivity OK"
+    info "connectivity OK"
     echo "ok: contrasea actualizada y conectividad verificada"
 }
 
@@ -520,7 +520,7 @@ _cmd_showpass() {
     if [[ -n "${nm_psk}" ]]; then
         echo "ssid    : ${ssid}"
         echo "password: ${nm_psk}"
-        log "INFO" "plaintext password displayed for ssid '${ssid}' on ${iface}"
+        info "plaintext password displayed for ssid '${ssid}' on ${iface}"
     else
         local psk_hash
         psk_hash="$(grep -oP '(?<=psk=)[^\s]+' "${conf}" || true)"
@@ -537,7 +537,7 @@ _cmd_panic() {
     _require_root "panic"
     _source_common
 
-    log "INFO" "wifi panic: iniciando recuperacin de red..."
+    info "wifi panic: iniciando recuperacin de red..."
 
     local state="/opt/wifi-setup/state/install.state"
     [[ -f "${state}" ]] && source "${state}"
@@ -549,37 +549,37 @@ _cmd_panic() {
         [[ -e "${iface_path}" ]] || continue
         local iface="${iface_path##*/}"
 
-        log "INFO" "recuperando interfaz ${iface}..."
+        info "recuperando interfaz ${iface}..."
         ip link set "${iface}" down 2>/dev/null || true
         sleep 1
         ip link set "${iface}" up 2>/dev/null \
-            || log "WARN" "no se pudo levantar ${iface}"
+            || warn "no se pudo levantar ${iface}"
         sleep 1
 
         if [[ -f "/etc/wpa_supplicant/wpa_supplicant-${iface}.conf" ]]; then
             systemctl restart "wpa_supplicant@${iface}" 2>/dev/null \
-                || log "WARN" "no se pudo reiniciar wpa_supplicant@${iface}"
+                || warn "no se pudo reiniciar wpa_supplicant@${iface}"
             sleep 3
         fi
 
         dhcpcd -n "${iface}" 2>/dev/null \
-            || log "WARN" "dhcpcd fall en ${iface}"
+            || warn "dhcpcd fall en ${iface}"
         found=1
     done
 
     if [[ "${INSTALL_MODE:-}" == "server" ]]; then
-        log "INFO" "restaurando forwarding (modo servidor)..."
+        info "restaurando forwarding (modo servidor)..."
         systemctl restart wifi-setup-forward 2>/dev/null \
-            || log "WARN" "no se pudo reiniciar wifi-setup-forward"
+            || warn "no se pudo reiniciar wifi-setup-forward"
     fi
 
     if [[ "${found}" -eq 0 ]]; then
-        log "WARN" "no se encontraron interfaces wireless"
+        warn "no se encontraron interfaces wireless"
         echo "warn: no se encontraron interfaces wireless  verifica: ip link show" >&2
         exit 1
     fi
 
-    log "INFO" "wifi panic: recuperacin completada"
+    info "wifi panic: recuperacin completada"
 }
 
 # ---------------------------------------------------------------------------
@@ -612,7 +612,7 @@ _cmd_setip() {
     sleep 5
 
     show_upstream_config "${iface}"
-    log "INFO" "upstream ${iface} reconfigurado via dhcpcd (IP del AP)"
+    info "upstream ${iface} reconfigurado via dhcpcd (IP del AP)"
     echo "ok: lease renovado. La IP la asigna el AP."
 }
 
