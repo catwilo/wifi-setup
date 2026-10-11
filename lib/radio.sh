@@ -193,17 +193,37 @@ radio_set_secondary() {
 }
 
 # ---------------------------------------------------------------------------
-# radio_use <iface> -- solo sesion, no persiste.
+# radio_use <iface> [--persist]
+# Deja SOLO esta antena encendida y apaga la otra. Sin --persist, el
+# cambio no sobrevive reboot; con --persist, autoconnect queda ON en
+# esta y OFF en la otra.
 # ---------------------------------------------------------------------------
 radio_use() {
-    local iface="${1:-}"
-    [[ -n "${iface}" ]] || die "uso: wifi radio use <iface>"
+    local iface="${1:-}" persist=0
+    shift || true
+    for a in "$@"; do [[ "${a}" == "--persist" ]] && persist=1; done
+    [[ -n "${iface}" ]] || die "uso: wifi radio use <iface> [--persist]"
     radio_is_iface "${iface}" || die "'${iface}' no es una interfaz WiFi"
 
-    mkdir -p "${STATE_DIR}"
-    printf 'SESSION_OVERRIDE="%s"\n' "${iface}" > "${RADIO_SESSION_FILE}"
-    chmod 600 "${RADIO_SESSION_FILE}"
-    ok "uso en esta sesion: ${iface} (no persiste)"
+    local other
+    while IFS= read -r other; do
+        [[ -n "${other}" ]] || continue
+        [[ "${other}" == "${iface}" ]] && continue
+        info "apagando ${other}..."
+        radio_down "${other}" ${persist:+--persist}
+    done < <(radio_ifaces)
+
+    info "encendiendo ${iface}..."
+    radio_up "${iface}" ${persist:+--persist}
+
+    if [[ "${persist}" -eq 1 ]]; then
+        mkdir -p "${STATE_DIR}"
+        printf 'SESSION_OVERRIDE="%s"\n' "${iface}" > "${RADIO_SESSION_FILE}"
+        chmod 600 "${RADIO_SESSION_FILE}"
+        ok "solo ${iface} activa, persistente"
+    else
+        ok "solo ${iface} activa (no persiste -- reboot vuelve a config previa)"
+    fi
 }
 
 # ---------------------------------------------------------------------------
