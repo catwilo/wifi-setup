@@ -167,7 +167,25 @@ _doctor_check_radios() {
         if [[ "${state}" == "connected" ]]; then
             _doctor_ok "${iface} (${bus}, ${driver}) conectada -> ${conn}"
         elif [[ "${state}" == "disconnected" ]]; then
-            _doctor_warn "${iface} (${bus}, ${driver}) desconectada (MAC ${mac})"
+            # Desconectada solo es WARN si HAY un perfil con
+            # autoconnect=yes que deberia estar levantando la iface.
+            # Si todos los perfiles de la iface tienen autoconnect=no
+            # (reposo intencional), es OK.
+            local _ac_has_auto=0
+            local _n _iname _ac
+            while IFS= read -r _n; do
+                [[ -n "${_n}" ]] || continue
+                _iname="$(nmcli -t -g connection.interface-name con show "${_n}" 2>/dev/null || true)"
+                [[ "${_iname}" == "${iface}" ]] || continue
+                _ac="$(nmcli -t -g connection.autoconnect con show "${_n}" 2>/dev/null || true)"
+                [[ "${_ac}" == "yes" ]] && { _ac_has_auto=1; break; }
+            done < <(nmcli -t -f NAME,TYPE con show 2>/dev/null \
+                | awk -F: '$2=="802-11-wireless"{print $1}')
+            if [[ "${_ac_has_auto}" -eq 1 ]]; then
+                _doctor_warn "${iface} (${bus}, ${driver}) desconectada con perfil activo (MAC ${mac})"
+            else
+                _doctor_ok "${iface} (${bus}, ${driver}) apagada por diseno (MAC ${mac})"
+            fi
         else
             _doctor_warn "${iface} (${bus}, ${driver}) estado: ${state}"
         fi
