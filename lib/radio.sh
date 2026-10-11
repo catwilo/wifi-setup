@@ -264,3 +264,144 @@ radio_down() {
         ok "autoconnect OFF persistente: ${con}"
     fi
 }
+
+# ---------------------------------------------------------------------------
+# Inventario fisico de antenas WiFi.
+# ---------------------------------------------------------------------------
+
+# _radio_kernel_ifaces -- lista ifaces WiFi presentes en el kernel, no en NM.
+# Una iface WiFi tiene /sys/class/net/<iface>/wireless/ o phy80211.
+_radio_kernel_ifaces() {
+    local p iface
+    for p in /sys/class/net/*/wireless; do
+        [[ -d "${p}" ]] || continue
+        iface="${p%/wireless}"
+        echo "${iface##*/}"
+    done | sort -u
+}
+
+# _radio_bus_of <iface> -- imprime PCI|USB|? segun el path del device.
+_radio_bus_of() {
+    local iface="$1"
+    local path
+    path="$(readlink -f "/sys/class/net/${iface}/device" 2>/dev/null || true)"
+    case "${path}" in
+        *"/usb"*)  echo "USB" ;;
+        *"/pci"*)  echo "PCI" ;;
+        "")        echo "?" ;;
+        *)         echo "?" ;;
+    esac
+}
+
+# _radio_driver_of <iface> -- imprime el driver de red real.
+# USB WiFi expone varias interfaces; la de red es la que no es usb/hub/btusb.
+_radio_driver_of() {
+    local iface="$1"
+    local ifdir="/sys/class/net/${iface}/device"
+    local sub driver
+
+    if [[ -d "${ifdir}" ]]; then
+        for sub in "${ifdir}"/*/driver; do
+            [[ -L "${sub}" ]] || continue
+            driver="$(basename "$(readlink -f "${sub}" 2>/dev/null)" 2>/dev/null)"
+            case "${driver}" in
+                usb|hub|btusb|"") continue ;;
+            esac
+            echo "${driver}"
+            return 0
+        done
+    fi
+
+    driver="$(basename "$(readlink -f "${ifdir}/driver" 2>/dev/null)" 2>/dev/null)"
+    echo "${driver:-?}"
+}
+
+# _radio_permanent_mac_of <iface> -- MAC de fabrica (permaddr) o la actual.
+_radio_permanent_mac_of() {
+    local iface="$1"
+    local perm
+    perm="$(ip link show "${iface}" 2>/dev/null \
+        | grep -oE 'permaddr [0-9a-f:]+' | awk '{print $2}' | head -1)"
+    if [[ -z "${perm}" ]]; then
+        perm="$(cat "/sys/class/net/${iface}/address" 2>/dev/null || echo "?")"
+    fi
+    echo "${perm}"
+}
+
+# _radio_kernel_state_of <iface> -- UP|DOWN|? segun el kernel.
+_radio_kernel_state_of() {
+    local iface="$1"
+    local state
+    state="$(cat "/sys/class/net/${iface}/operstate" 2>/dev/null || echo "?")"
+    case "${state}" in
+        up)              echo "UP" ;;
+        down|dormant)    echo "DOWN" ;;
+        *)               echo "${state}" ;;
+    esac
+}
+
+# _radio_nm_state_of <iface> -- estado en NM + perfil, o "no en NM".
+_radio_nm_state_of() {
+    local iface="$1"
+    if ! nmcli -t -f DEVICE,TYPE dev status 2>/dev/null \
+            | awk -F: -v i="${iface}" '$1==i && $2=="wifi"{found=1} END{exit !found}'; then
+        echo "no en NM"
+        return 0
+    fi
+    local state conn
+    state="$(nmcli -t -f DEVICE,STATE dev status 2>/dev/null \
+        | awk -F: -v i="${iface}" '$1==i {print $2}')"
+    conn="$(nmcli -t -f DEVICE,CONNECTION dev status 2>/dev/null \
+        | awk -F: -v i="${iface}" '$1==i {print $2}')"
+    if [[ -n "${conn}" ]]; then
+        echo "${state} (${conn})"
+    else
+        echo "${state}"
+    fi
+}
+
+# radio_ifaces_list -- tabla: inventario fisico completo (kernel + NM).
+radio_ifaces_list() {
+    nm_require
+
+    printf '%-10s %-5s %-16s %-20s %-8s %s\n' \
+        "IFACE" "BUS" "DRIVER" "MAC PERMANENTE" "KERNEL" "NM"
+    printf '%s\n' "--------------------------------------------------------------------------------"
+
+    local iface bus driver mac kstate nstate found_any=0
+    while IFS= read -r iface; do
+        [[ -n "${iface}" ]] || continue
+        found_any=1
+        bus="$(_radio_bus_of "${iface}")"
+        driver="$(_radio_driver_of "${iface}")"
+        mac="$(_radio_permanent_mac_of "${iface}")"
+        kstate="$(_radio_kernel_state_of "${iface}")"
+        nstate="$(_radio_nm_state_of "${iface}")"
+        printf '%-10s %-5s %-16s %-20s %-8s %s\n' \
+            "${iface}" "${bus}" "${driver}" "${mac}" "${kstate}" "${nstate}"
+    done < <(_radio_kernel_ifaces)
+
+    if [[ "${found_any}" -eq 0 ]]; then
+        warn "no se detecto ninguna antena WiFi en el kernel"
+        warn "verifica: ls /sys/class/net/*/wireless, lsusb, lspci"
+        return 1
+    fi
+}
+
+# radio_ifaces_missing -- detecta adaptadores USB que existen en el bus
+# pero cuyo driver no se cargo (no hay iface de red).
+radio_ifaces_missing() {
+    local found=0
+    if command -v lsusb >/dev/null 2>&1; then
+        # Adaptadores WiFi conocidos por VID:PID (base minima + patron)
+        # Buscar cualquiera que se identifique como Wireless
+        local line
+        while IFS= read -r line; do
+            [[ -n "${line}" ]] || continue
+            found=1
+            echo "posible adaptador sin driver: ${line}"
+        done < <(lsusb 2>/dev/null | grep -iE "wireless|wifi|802\.11|aic|rtl88|mt76|ath9k|r8188|rtw")
+    fi
+    [[ "${found}" -eq 0 ]] && return 1
+    return 0
+}

@@ -109,6 +109,26 @@ _cmd_status() {
 }
 
 # ---------------------------------------------------------------------------
+# ifaces -- inventario fisico completo de antenas WiFi.
+# Muestra lo que el kernel ve + lo que NM ve, mas adaptadores USB
+# presentes en el bus que no cargaron driver.
+# ---------------------------------------------------------------------------
+_cmd_ifaces() {
+    _load nm radio
+    # Solo lectura: no requiere root.
+
+    section "Antenas WiFi (kernel + NM)"
+    radio_ifaces_list || true
+
+    section "Adaptadores sin driver cargado"
+    if ! radio_ifaces_missing; then
+        echo "  (ninguno -- todos los adaptadores detectados tienen driver)"
+    fi
+
+    echo ""
+}
+
+# ---------------------------------------------------------------------------
 # radio <list|primary|secondary|use|clear-session|up|down>
 # ---------------------------------------------------------------------------
 _cmd_radio() {
@@ -450,6 +470,7 @@ ESTADO
   wifi status                    NM, antenas, conexiones, LAN, VPN, internet
 
 ANTENAS (nativa + USB)
+  wifi ifaces                    inventario fisico (kernel + NM + huérfanos)
   wifi radio list                tabla: iface, tipo, estado, conexion, rol
   sudo wifi radio primary <i>    persistente: i pasa a PRIMARY
   sudo wifi radio secondary <i>  persistente: i pasa a SECONDARY
@@ -517,6 +538,7 @@ case "${CMD}" in
     uninstall|remove) _cmd_uninstall "$@" ;;
     check|verify)    _cmd_check "$@" ;;
     status)          _cmd_status ;;
+    ifaces)          _cmd_ifaces ;;
     radio)           _cmd_radio "$@" ;;
     add)             _cmd_add "$@" ;;
     networks)        _cmd_networks ;;
