@@ -86,6 +86,11 @@ _root_phase() {
     chmod 700 "${BASE_DIR}" "${STATE_DIR}" "${LOG_DIR}" "${CONFIG_DIR}"
     unset _base_owner
 
+    local INSTALL_MODE="server"
+    local BIN_DIR="/usr/local/bin"
+    local WIFI_BIN="${BIN_DIR}/wifi"
+    local WIFI_REPO_BIN="${SCRIPT_DIR}/bin/wifi"
+
     # ---------------------------------------------------------------------
     # Pre-check de idempotencia: si TODO esta ya aplicado, no re-ejecutar.
     # ---------------------------------------------------------------------
@@ -135,10 +140,6 @@ _root_phase() {
         return 0
     fi
 
-    local INSTALL_MODE="server"
-    local BIN_DIR="/usr/local/bin"
-    local WIFI_BIN="${BIN_DIR}/wifi"
-    local WIFI_REPO_BIN="${SCRIPT_DIR}/bin/wifi"
 
     LOG_FILE="${WIFI_SETUP_LOG:-/var/log/wifi-setup-install-$(date +%Y%m%d-%H%M%S).log}"
     mkdir -p "$(dirname "${LOG_FILE}")"
@@ -561,7 +562,29 @@ _relaunch_in_tmux() {
     local inner
     inner="WIFI_SETUP_INWIN=1 WIFI_SETUP_LOG=$(printf '%q' "${log}") bash $(printf '%q' "$0")"
     local a; for a in "$@"; do inner+=" $(printf '%q' "${a}")"; done
-    inner="${inner} 2>&1 | tee -a $(printf '%q' "${log}"); exit"
+    # Cola de la ventana: esperar ENTER antes de cerrar para que el usuario
+    # alcance a leer el resultado. El heredoc con quote literal hace que
+    # ${rc} y ${WIFI_SETUP_LOG} se expandan EN LA VENTANA, no ahora.
+    local trailer
+    trailer="$(cat <<'TRAILER'
+rc=${PIPESTATUS[0]}
+echo
+echo "=========================================="
+if [ "${rc}" -eq 0 ]; then
+    echo "  RESULTADO: OK -- instalacion completa"
+else
+    echo "  RESULTADO: FALLO (rc=${rc})"
+    echo "  Revisa el log para el detalle."
+fi
+echo "  Log: ${WIFI_SETUP_LOG}"
+echo "=========================================="
+echo
+echo "ENTER para cerrar esta ventana..."
+read -r _wifi_setup_wait
+exit ${rc}
+TRAILER
+)"
+    inner+=" 2>&1 | tee -a $(printf '%q' "${log}"); ${trailer}"
 
     # Sesion destino:
     #   dentro de tmux  -> la sesion actual
