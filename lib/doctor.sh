@@ -93,16 +93,17 @@ _doctor_driver_of() {
     local sub driver
 
     if [[ -d "${ifdir}" ]]; then
+        # USB WiFi expone varias interfaces (bluetooth, net, etc.). El
+        # driver de red es el que no es usb/hub/btusb. Sondear los
+        # subdirs <bus>-<dev>:<cfg>/driver.
         for sub in "${ifdir}"/*/driver; do
             [[ -L "${sub}" ]] || continue
             driver="$(basename "$(readlink -f "${sub}" 2>/dev/null)" 2>/dev/null)"
             case "${driver}" in
                 usb|hub|btusb|"") continue ;;
             esac
-            if [[ -d "${sub%/driver}/net/${iface}" ]]; then
-                echo "${driver}"
-                return 0
-            fi
+            echo "${driver}"
+            return 0
         done
     fi
 
