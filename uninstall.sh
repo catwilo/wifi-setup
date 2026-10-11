@@ -16,6 +16,9 @@ if [[ "${1:-}" == "--help" ]] || [[ "${1:-}" == "-h" ]]; then
     echo "  · limpia reglas iptables del proyecto"
     echo "  · elimina configs systemd-networkd del proyecto"
     echo "  · elimina config SSH del proyecto (sshd_config base intacto)"
+    echo "  · desenmascara NetworkManager e iwd (los enmascaró purge_network_stack)"
+    echo "    nota: no los reactiva automáticamente, solo quita el mask;"
+    echo "          reactivar con: systemctl enable --now NetworkManager"
     echo "  · pregunta si eliminar ${BASE_DIR} (datos, logs, config)"
     exit 0
 fi
@@ -43,6 +46,19 @@ systemctl daemon-reload
 
 # Barrer restos de instaladores VIEJOS (wifi-setup@.service, wifi-panic, services/)
 sweep_legacy_install
+
+# Desenmascarar gestores de red que purge_network_stack enmascaro en install.
+# install enmascara NetworkManager e iwd a proposito (evita que peleen por
+# la interfaz con dhcpcd + wpa_supplicant). uninstall debe revertirlo, o la
+# maquina queda sin gestor de red tras desinstalar. NO reactivamos los
+# servicios -- solo quitamos el mask: reactivar es decision del admin.
+for _unmask_svc in NetworkManager NetworkManager-wait-online iwd; do
+    if systemctl is-enabled "${_unmask_svc}" 2>&1 | grep -q "masked"; then
+        systemctl unmask "${_unmask_svc}" 2>/dev/null \
+            && info "${_unmask_svc} desenmascarado (reactivar con: systemctl enable --now ${_unmask_svc})" \
+            || warn "no se pudo desenmascarar ${_unmask_svc}"
+    fi
+done
 
 # Symlinks
 rm -f "/usr/local/bin/wifi"
