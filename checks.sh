@@ -10,7 +10,7 @@ if [[ "${1:-}" == "--help" ]] || [[ "${1:-}" == "-h" ]]; then
     echo "uso: sudo wifi check <server|client>"
     echo ""
     echo "Verifica que la instalación esté correcta y funcionando."
-    echo "Lee el estado guardado en /opt/wifi-setup/state/install.state"
+    echo "Lee el estado guardado en /usr/local/share/wifi-setup/state/install.state"
     echo ""
     echo "Checks comunes (ambos modos):"
     echo "  · SSH activo en puerto 22 y habilitado en boot"

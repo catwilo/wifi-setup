@@ -7,15 +7,6 @@ IFS=$'\n\t'
 
 _SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-if [[ -f "${_SELF_DIR}/../lib/common.sh" ]]; then
-    PROJECT_ROOT="$(cd "${_SELF_DIR}/.." && pwd)"
-else
-    PROJECT_ROOT="/opt/wifi-setup"
-fi
-
-LIB_DIR="${PROJECT_ROOT}/lib"
-SCRIPTS_DIR="${PROJECT_ROOT}"
-
 if [[ -t 1 ]]; then
     _B='\033[1m'; _C='\033[0;36m'; _G='\033[0;32m'
     _Y='\033[1;33m'; _R='\033[0;31m'; _X='\033[0m'
@@ -24,6 +15,13 @@ else
 fi
 
 _die()  { echo -e "${_R}error: $*${_X}" >&2; exit 1; }
+
+PROJECT_ROOT="$(cd "${_SELF_DIR}/.." && pwd)"
+[[ -f "${PROJECT_ROOT}/lib/common.sh" ]] \
+    || _die "lib/common.sh no encontrado en ${PROJECT_ROOT}/lib"
+
+LIB_DIR="${PROJECT_ROOT}/lib"
+SCRIPTS_DIR="${PROJECT_ROOT}"
 
 _require_root() {
     [[ "${EUID}" -eq 0 ]] \
@@ -59,7 +57,7 @@ _cmd_check() {
     _require_root "check"
     local mode="${1:-}"
     if [[ -z "${mode}" ]]; then
-        local state="/opt/wifi-setup/state/install.state"
+        local state="${STATE_DIR}/install.state"
         [[ -f "${state}" ]] \
             || _die "no hay instalacin activa  especifica modo: wifi check <server|client>"
         # shellcheck source=/dev/null
@@ -539,7 +537,7 @@ _cmd_panic() {
 
     info "wifi panic: iniciando recuperacin de red..."
 
-    local state="/opt/wifi-setup/state/install.state"
+    local state="${STATE_DIR}/install.state"
     [[ -f "${state}" ]] && source "${state}"
 
     systemctl daemon-reload || true
@@ -604,7 +602,7 @@ _cmd_setip() {
 
     validate_interface "${iface}"
 
-    local state="/opt/wifi-setup/state/install.state"
+    local state="${STATE_DIR}/install.state"
     [[ -f "${state}" ]] && source "${state}"
 
     setup_upstream_dhcpcd "${iface}" "${CHOSEN_MAC:-}"

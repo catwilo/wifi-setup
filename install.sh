@@ -37,7 +37,7 @@ if [[ "${1:-}" == "--help" ]] || [[ "${1:-}" == "-h" ]]; then
     echo "  · verifica internet tras configurar; avisa si falla"
     echo ""
     echo "En reinstalación: limpieza idempotente (servicios, symlinks, iptables del"
-    echo "proyecto, networkd, sysctl) y sobrescritura de /opt/wifi-setup."
+    echo "proyecto, networkd, sysctl) y symlink a /usr/local/bin/wifi."
     echo ""
     echo "Ver también:"
     echo "  sudo wifi uninstall    desinstalar todo"
@@ -47,25 +47,9 @@ fi
 
 require_root
 
-INSTALL_DIR="/opt/wifi-setup"
-
-# Auto-update: si corremos desde INSTALL_DIR, buscar repo fuente y sincronizar
-_REPO_SOURCE=""
-_candidate="${HOME}/unix-toolkit-tools/wifi-setup"
-if [[ "$(realpath "${SCRIPT_DIR}")" == "$(realpath "${INSTALL_DIR}")" ]]; then
-    if [[ -d "${_candidate}" ]] && [[ -f "${_candidate}/install.sh" ]] &&        [[ "$(realpath "${_candidate}")" != "$(realpath "${INSTALL_DIR}")" ]]; then
-        _REPO_SOURCE="${_candidate}"
-        info "auto-update: sincronizando desde repo ${_REPO_SOURCE}..."
-        cp -a "${_REPO_SOURCE}/bin/." "${INSTALL_DIR}/bin/"
-        cp -a "${_REPO_SOURCE}/lib/." "${INSTALL_DIR}/lib/"
-        cp -a "${_REPO_SOURCE}/"*.sh "${INSTALL_DIR}/"
-        chmod +x "${INSTALL_DIR}"/bin/* "${INSTALL_DIR}"/*.sh
-        info "auto-update: archivos sincronizados — continuando con versión actualizada"
-        exec "${INSTALL_DIR}/install.sh" "$@"
-    else
-        info "repo fuente no encontrado en ${_candidate} — usando versión instalada"
-    fi
-fi
+BIN_DIR="/usr/local/bin"
+WIFI_BIN="${BIN_DIR}/wifi"
+WIFI_REPO_BIN="${SCRIPT_DIR}/bin/wifi"
 
 # ===========================================================================
 # SUPERVIVENCIA SSH: saltar a la ventana byobu ANTES de cualquier salida.
@@ -84,8 +68,8 @@ relaunch_byobu "${SCRIPT_DIR}/install.sh" "${INSTALL_MODE}"
 # nunca en el pase interactivo previo al detach, para no duplicar trabajo.
 # ===========================================================================
 # Limpieza automatica de instalacion previa (idempotente)
-if [[ -d "${INSTALL_DIR}" ]]; then
-    info "instalación previa detectada en ${INSTALL_DIR} — limpiando antes de reinstalar..."
+if [[ -f "${STATE_DIR}/install.state" ]] || [[ -L "${WIFI_BIN}" ]]; then
+    info "instalación previa detectada — limpiando antes de reinstalar..."
 
     # Barrer restos de instaladores VIEJOS (wifi-setup@.service, wifi-panic, services/)
     sweep_legacy_install
@@ -102,8 +86,8 @@ if [[ -d "${INSTALL_DIR}" ]]; then
     # (versiones viejas exponían binarios individuales)
     for old_bin in wifi wfs wifi-status wifi-list wifi-passwd wifi-panic wifi-showpass; do
         old_link="/usr/local/bin/${old_bin}"
-        # Solo eliminar si apunta a nuestro INSTALL_DIR (no tocar binarios ajenos)
-        if [[ -L "${old_link}" ]] && [[ "$(readlink -f "${old_link}" 2>/dev/null)" == "${INSTALL_DIR}"* ]]; then
+        # Solo eliminar si apunta a nuestro repo (no tocar binarios ajenos)
+        if [[ -L "${old_link}" ]] && [[ "$(readlink -f "${old_link}" 2>/dev/null)" == "${SCRIPT_DIR}"* ]]; then
             rm -f "${old_link}"
             info "symlink eliminado: ${old_link}"
         fi
@@ -317,22 +301,15 @@ if [[ ! -f /etc/resolv.conf.head ]] || ! grep -q "1.1.1.1" /etc/resolv.conf.head
 fi
 
 # ===========================================================================
-# INSTALAR ARCHIVOS
+# INSTALAR (symlink model: el repo es la unica fuente de verdad)
 # ===========================================================================
-info "instalando archivos en ${INSTALL_DIR}..."
+info "creando directorios de estado en ${BASE_DIR}..."
 require_dirs
-if [[ "$(realpath "${SCRIPT_DIR}")" != "$(realpath "${INSTALL_DIR}")" ]]; then
-    cp -a "${SCRIPT_DIR}/bin/." "${INSTALL_DIR}/bin/"
-    cp -a "${SCRIPT_DIR}/lib/." "${INSTALL_DIR}/lib/"
-    cp -a "${SCRIPT_DIR}/"*.sh "${INSTALL_DIR}/"
-    info "archivos copiados desde ${SCRIPT_DIR}"
-else
-    info "corriendo desde ${INSTALL_DIR} — copia omitida (ya en sitio)"
-fi
-chmod +x "${INSTALL_DIR}"/bin/*
-chmod +x "${INSTALL_DIR}"/*.sh
+chmod +x "${SCRIPT_DIR}/bin/wifi"
 
-ln -sf "${INSTALL_DIR}/bin/wifi" "/usr/local/bin/wifi"
+mkdir -p "${BIN_DIR}"
+ln -sfn "${WIFI_REPO_BIN}" "${WIFI_BIN}"
+info "symlink: ${WIFI_BIN} -> ${WIFI_REPO_BIN}"
 
 # Instalar hook dhcpcd de failover uplink (idempotente)
 if [[ -f "${SCRIPT_DIR}/dhcpcd-hooks/90-wifi-setup-uplink" ]]; then
@@ -473,7 +450,7 @@ if [[ -f "${STATE_DIR}/lan-role.conf" ]]; then
     info "rol LAN previo detectado -- re-aplicando para persistencia..."
     # shellcheck source=/dev/null
     ( source "${STATE_DIR}/lan-role.conf"
-      "${INSTALL_DIR}/bin/wifi" lan "${LAN_MODE}" "${LAN_IFACE}" "${LAN_UPSTREAM}" ) \
+      "${WIFI_BIN}" lan "${LAN_MODE}" "${LAN_IFACE}" "${LAN_UPSTREAM}" ) \
         || warn "no se pudo re-aplicar rol LAN -- correr manual: wifi lan <modo>"
 fi
 

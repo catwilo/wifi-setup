@@ -16,7 +16,7 @@ if [[ "${1:-}" == "--help" ]] || [[ "${1:-}" == "-h" ]]; then
     echo "  · limpia reglas iptables del proyecto"
     echo "  · elimina configs systemd-networkd del proyecto"
     echo "  · elimina config SSH del proyecto (sshd_config base intacto)"
-    echo "  · pregunta si eliminar /opt/wifi-setup (datos, logs, config)"
+    echo "  · pregunta si eliminar ${BASE_DIR} (datos, logs, config)"
     exit 0
 fi
 
@@ -84,12 +84,12 @@ systemctl restart ssh 2>/dev/null || systemctl restart sshd 2>/dev/null || true
 info "config SSH wifi-setup eliminada (sshd_config base intacto)"
 
 echo ""
-read -r -p "¿Eliminar también /opt/wifi-setup (logs, state, config)? [s/N]: " DEL_DATA
+read -r -p "¿Eliminar también ${BASE_DIR} (logs, state, config)? [s/N]: " DEL_DATA
 if [[ "${DEL_DATA}" =~ ^[sS]$ ]]; then
-    rm -rf /opt/wifi-setup
-    info "/opt/wifi-setup eliminado"
+    rm -rf "${BASE_DIR}"
+    info "${BASE_DIR} eliminado"
 else
-    info "/opt/wifi-setup preservado"
+    info "${BASE_DIR} preservado"
 fi
 
 echo ""

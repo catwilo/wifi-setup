@@ -3,8 +3,11 @@
 # NOCARRIER_ROAMING se ignora a proposito: es reconexion momentanea (roaming),
 # no una caida real -- actuar aqui causaria falsos positivos de failover.
 
+WIFI_BIN="/usr/local/bin/wifi"
+WIFI_LOG="/usr/local/share/wifi-setup/logs/uplink-hook.log"
+
 if [ "${reason}" = "NOCARRIER" ]; then
-    if [ -x /opt/wifi-setup/bin/wifi ]; then
-        /opt/wifi-setup/bin/wifi uplink-event "${interface}" "${reason}" 2>>/opt/wifi-setup/logs/uplink-hook.log
+    if [ -x "${WIFI_BIN}" ]; then
+        "${WIFI_BIN}" uplink-event "${interface}" "${reason}" 2>>"${WIFI_LOG}"
     fi
 fi

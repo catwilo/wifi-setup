@@ -5,7 +5,7 @@ set -Eeuo pipefail
 IFS=$'\n\t'
 umask 077
 
-BASE_DIR="/opt/wifi-setup"
+BASE_DIR="/usr/local/share/wifi-setup"
 LOG_DIR="${BASE_DIR}/logs"
 STATE_DIR="${BASE_DIR}/state"
 CONFIG_DIR="${BASE_DIR}/config"
@@ -35,8 +35,8 @@ die() {
 # Dirs
 # ---------------------------------------------------------------------------
 require_dirs() {
-    mkdir -p "${BASE_DIR}"/{bin,lib,config,state,logs}
-    chmod 700 "${BASE_DIR}"/config "${BASE_DIR}"/logs "${BASE_DIR}"/state
+    mkdir -p "${STATE_DIR}" "${LOG_DIR}" "${CONFIG_DIR}"
+    chmod 700 "${CONFIG_DIR}" "${LOG_DIR}" "${STATE_DIR}"
 }
 
 # ---------------------------------------------------------------------------
@@ -74,7 +74,6 @@ rollback_network() {
 # Idempotente. Elimina:
 #   - units template/instancia wifi-setup@*.service (recovery viejo)
 #   - binarios sueltos: bin/wifi-panic, /usr/local/bin/wifi-panic, wfs, etc.
-#   - carpeta heredada /opt/wifi-setup/services
 # No toca las units actuales (wifi-setup-forward / wifi-setup-client).
 # ---------------------------------------------------------------------------
 sweep_legacy_install() {
@@ -97,21 +96,13 @@ sweep_legacy_install() {
         info "archivos de unit legacy eliminados: wifi-setup@*.service"
     fi
 
-    # Binarios sueltos de esquemas viejos
+    # Binarios sueltos de esquemas viejos (solo /usr/local/bin)
     local b
     for b in wifi-panic wfs wifi-status wifi-list wifi-passwd wifi-showpass; do
-        [[ -e "/opt/wifi-setup/bin/${b}" ]] && { rm -f "/opt/wifi-setup/bin/${b}"; found=1; }
         if [[ -L "/usr/local/bin/${b}" || -f "/usr/local/bin/${b}" ]]; then
             rm -f "/usr/local/bin/${b}"; found=1
         fi
     done
-
-    # Carpeta heredada services/
-    if [[ -d /opt/wifi-setup/services ]]; then
-        rm -rf /opt/wifi-setup/services
-        found=1
-        info "carpeta legacy eliminada: /opt/wifi-setup/services"
-    fi
 
     if [[ "${found}" -eq 1 ]]; then
         systemctl daemon-reload 2>/dev/null || true

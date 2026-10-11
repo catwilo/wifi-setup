@@ -3,7 +3,7 @@
 # secciones jerárquicas, spinner TTY-aware. Escribe a archivo sin ANSI.
 # Sustituye a log(). Niveles: ok|warn|err|info|step.
 
-LOG_DIR="${LOG_DIR:-/opt/wifi-setup/logs}"
+LOG_DIR="${LOG_DIR:-/usr/local/share/wifi-setup/logs}"
 _LOG_FILE="${LOG_DIR}/wifi-setup.log"
 
 if [[ -t 1 ]]; then
