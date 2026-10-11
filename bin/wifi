@@ -566,7 +566,7 @@ case "${CMD}" in
     ifaces)          _cmd_ifaces ;;
     radio)           _cmd_radio "$@" ;;
     add)             _cmd_add "$@" ;;
-    networks)        _cmd_networks ;;
+    networks)        _cmd_networks "$@" ;;
     switch)          _cmd_switch "$@" ;;
     passwd|password) _cmd_passwd "$@" ;;
     showpass)        _cmd_showpass "$@" ;;
