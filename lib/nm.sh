@@ -207,3 +207,141 @@ nm_summary() {
         printf '  %-30s autoconnect=%s\n' "${name}" "${auto:-?}"
     done < <(nmcli -t -f NAME con show | grep -v '^$')
 }
+
+# ---------------------------------------------------------------------------
+# USB WiFi naming
+# ---------------------------------------------------------------------------
+# Lee config/usb-names.conf (una linea por adapter: <mac> <name>) y escribe
+# un .link de systemd por cada mapping. Aplica en el proximo boot.
+#
+# El .link fuerza el nombre de la iface por PermanentMACAddress (MAC de
+# fabrica, estable entre boots y spoofeos). Si el adapter ya tiene el
+# nombre correcto, no hace nada.
+#
+# Idempotente: si el .link existe con el mismo contenido, no lo reescribe.
+
+NM_USB_LINK_DIR="/etc/systemd/network"
+NM_USB_LINK_PREFIX="10-wifi-setup-"
+
+# _nm_usb_valid_mac <mac> -- 0 si es MAC valida en formato aa:bb:cc:dd:ee:ff
+_nm_usb_valid_mac() {
+    [[ "${1:-}" =~ ^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$ ]]
+}
+
+# _nm_usb_valid_name <name> -- 0 si el nombre es seguro para .link.
+# Solo letras, numeros, guion y guion bajo; sin / ni espacios.
+_nm_usb_valid_name() {
+    [[ "${1:-}" =~ ^[a-zA-Z0-9_-]+$ ]]
+}
+
+# nm_usb_permanent_mac <iface> -- imprime la MAC permanente.
+# Fuente nativa: 'permaddr' de ip link. Fallback: /sys/class/net/<iface>/address.
+nm_usb_permanent_mac() {
+    local iface="$1"
+    local perm
+    perm="$(ip link show "${iface}" 2>/dev/null \
+        | grep -oE 'permaddr ([0-9a-f:]+)' | awk '{print $2}' | head -1)"
+    if [[ -z "${perm}" ]]; then
+        perm="$(cat "/sys/class/net/${iface}/address" 2>/dev/null || true)"
+    fi
+    printf '%s\n' "${perm,,}"
+}
+
+# nm_usb_is_usb <iface> -- 0 si la iface esta en un bus USB.
+nm_usb_is_usb() {
+    local iface="$1"
+    local path
+    path="$(readlink -f "/sys/class/net/${iface}" 2>/dev/null || true)"
+    [[ "${path}" == *"/usb"* ]]
+}
+
+# nm_usb_names_apply <config_file>
+# Aplica los mapeos del archivo. Escribe los .link idempotentemente.
+# Imprime un resumen por mapping.
+nm_usb_names_apply() {
+    local cfg="$1"
+    [[ -f "${cfg}" ]] || { warn "usb-names.conf no existe: ${cfg}"; return 0; }
+
+    mkdir -p "${NM_USB_LINK_DIR}"
+
+    local line mac name link desired applied=0 skipped=0
+    while IFS= read -r line; do
+        # Strip comment + leading/trailing whitespace
+        line="${line%%#*}"
+        line="$(printf '%s' "${line}" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+        [[ -n "${line}" ]] || continue
+
+        # Expect exactly two fields: mac name
+        # shellcheck disable=SC2086
+        set -- ${line}
+        if [[ "$#" -ne 2 ]]; then
+            warn "usb-names.conf: linea ignorada (formato esperado '<mac> <name>'): ${line}"
+            continue
+        fi
+        mac="$1"
+        name="$2"
+
+        mac="${mac,,}"
+        if ! _nm_usb_valid_mac "${mac}"; then
+            warn "usb-names.conf: MAC invalida, ignorada: ${mac}"
+            continue
+        fi
+        if ! _nm_usb_valid_name "${name}"; then
+            warn "usb-names.conf: nombre invalido, ignorado: ${name}"
+            continue
+        fi
+
+        link="${NM_USB_LINK_DIR}/${NM_USB_LINK_PREFIX}${name}.link"
+        desired="$(printf '%s\n' \
+            "# wifi-setup -- USB WiFi rename (aplicado por systemd-udevd en boot)" \
+            "# Generado automaticamente -- no editar; cambia config/usb-names.conf" \
+            "[Match]" \
+            "PermanentMACAddress=${mac}" \
+            "" \
+            "[Link]" \
+            "Name=${name}")"
+
+        if [[ -f "${link}" ]] && [[ "$(cat "${link}")" == "${desired}" ]]; then
+            info "usb-name: ${mac} -> ${name} (sin cambios)"
+            skipped=$((skipped + 1))
+            continue
+        fi
+
+        printf '%s\n' "${desired}" > "${link}"
+        chmod 644 "${link}"
+        ok "usb-name: ${mac} -> ${name} (aplicara en proximo boot)"
+        applied=$((applied + 1))
+    done < "${cfg}"
+
+    if [[ "${applied}" -gt 0 ]]; then
+        systemctl daemon-reload 2>/dev/null || true
+        udevadm control --reload 2>/dev/null || true
+        info "usb-names: ${applied} link(s) escrito(s), ${skipped} sin cambios"
+        info "los renombrados se aplican al proximo reinicio"
+    else
+        info "usb-names: todos los mappings ya estaban aplicados"
+    fi
+}
+
+# nm_usb_names_status -- imprime mapping actual + si el .link esta.
+nm_usb_names_status() {
+    local cfg="$1"
+    [[ -f "${cfg}" ]] || { echo "  (no hay config/usb-names.conf)"; return 0; }
+    local line mac name link
+    while IFS= read -r line; do
+        line="${line%%#*}"
+        line="$(printf '%s' "${line}" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+        [[ -n "${line}" ]] || continue
+        # shellcheck disable=SC2086
+        set -- ${line}
+        [[ "$#" -eq 2 ]] || continue
+        mac="$1"
+        name="$2"
+        link="${NM_USB_LINK_DIR}/${NM_USB_LINK_PREFIX}${name}.link"
+        if [[ -f "${link}" ]]; then
+            echo "  ${mac} -> ${name} [${link} OK]"
+        else
+            echo "  ${mac} -> ${name} [sin .link]"
+        fi
+    done < "${cfg}"
+}

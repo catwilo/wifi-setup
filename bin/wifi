@@ -346,6 +346,39 @@ _cmd_lan() {
 }
 
 # ---------------------------------------------------------------------------
+# usb-names <status|apply|edit>
+# Gestiona el mapeo MAC -> nombre de iface USB WiFi.
+# Fuente: config/usb-names.conf en BASE_DIR (si install corrio) o en el repo.
+# ---------------------------------------------------------------------------
+_cmd_usb_names() {
+    local sub="${1:-}"
+    shift || true
+
+    _load nm
+    require_root
+
+    local cfg="${CONFIG_DIR}/usb-names.conf"
+    [[ -f "${cfg}" ]] || cfg="${LIB_DIR}/../config/usb-names.conf"
+
+    case "${sub}" in
+        status|"")
+            echo "usb-names.conf: ${cfg}"
+            echo ""
+            nm_usb_names_status "${cfg}"
+            ;;
+        apply)
+            nm_usb_names_apply "${cfg}"
+            ;;
+        edit)
+            [[ -f "${cfg}" ]] || { _die "no existe ${cfg} -- corre wifi install primero"; }
+            "${EDITOR:-vi}" "${cfg}"
+            info "re-aplica con: wifi usb-names apply"
+            ;;
+        *) _die "uso: wifi usb-names <status|apply|edit>" ;;
+    esac
+}
+
+# ---------------------------------------------------------------------------
 # vpn <install|up|down|status>
 # ---------------------------------------------------------------------------
 _cmd_vpn() {
@@ -409,6 +442,11 @@ MAC
   sudo wifi setmac <profile> <mac|random|stable|permanent>
   wifi showmac <profile>
 
+USB NAMING (MAC -> nombre de iface USB WiFi)
+  wifi usb-names                ver mappings y estado de .link
+  sudo wifi usb-names apply     aplicar mappings (proximo boot)
+  sudo wifi usb-names edit      editar config/usb-names.conf
+
 LAN (cable ethernet, activacion manual)
   sudo wifi lan setup server --ip 1.2.3.2/24
   sudo wifi lan setup client --ip 1.2.3.1/24 --gw 1.2.3.2
@@ -455,6 +493,7 @@ case "${CMD}" in
     autoconnect)     _cmd_autoconnect "$@" ;;
     panic)           _cmd_panic ;;
     lan)             _cmd_lan "$@" ;;
+    usb-names)       _cmd_usb_names "$@" ;;
     vpn)             _cmd_vpn "$@" ;;
     version|-v|--version) _cmd_version ;;
     help|-h|--help|"")    _cmd_help ;;

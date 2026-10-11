@@ -104,6 +104,55 @@ _root_phase() {
     chmod 700 "${BASE_DIR}" "${STATE_DIR}" "${LOG_DIR}" "${CONFIG_DIR}"
     unset _base_owner
 
+    # ---------------------------------------------------------------------
+    # Pre-check de idempotencia: si TODO esta ya aplicado, no re-ejecutar.
+    # ---------------------------------------------------------------------
+    local _idem_nm="" _idem_iwd="" _idem_dhcpcd="" _idem_symlink="" _idem_state=""
+    local _idem_ok=1
+
+    if systemctl is-active NetworkManager >/dev/null 2>&1; then
+        _idem_nm="activo"
+    else
+        _idem_nm="inactivo"
+        _idem_ok=0
+    fi
+    if systemctl is-enabled iwd 2>/dev/null | grep -q '^disabled$'; then
+        _idem_iwd="disabled"
+    else
+        _idem_iwd="no disabled"
+        _idem_ok=0
+    fi
+    if systemctl is-enabled dhcpcd 2>/dev/null | grep -q '^disabled$'; then
+        _idem_dhcpcd="disabled"
+    else
+        _idem_dhcpcd="no disabled"
+        _idem_ok=0
+    fi
+    if [[ -L "${WIFI_BIN}" ]] && [[ "$(readlink -f "${WIFI_BIN}")" == "${WIFI_REPO_BIN}" ]]; then
+        _idem_symlink="OK"
+    else
+        _idem_symlink="pendiente"
+        _idem_ok=0
+    fi
+    if [[ -f "${STATE_DIR}/install.state" ]]; then
+        _idem_state="existe"
+    else
+        _idem_state="falta"
+        _idem_ok=0
+    fi
+
+    if [[ "${_idem_ok}" -eq 1 ]]; then
+        ok "wifi-setup ya instalado -- nada que hacer"
+        info "  NetworkManager: ${_idem_nm}"
+        info "  iwd:            ${_idem_iwd} (fallback manual)"
+        info "  dhcpcd:         ${_idem_dhcpcd}"
+        info "  symlink:        ${_idem_symlink}"
+        info "  install.state:  ${_idem_state}"
+        info ""
+        info "para forzar reinstalacion completa: borra ${STATE_DIR}/install.state y vuelve a correr"
+        return 0
+    fi
+
     local INSTALL_MODE="server"
     local BIN_DIR="/usr/local/bin"
     local WIFI_BIN="${BIN_DIR}/wifi"
@@ -235,12 +284,28 @@ _root_phase() {
         nmcli dev set "${ifc}" managed yes 2>/dev/null || true
     done
 
-    info "esperando IP en ${WIFI_PRIMARY} (max 45s)..."
-    local waited=0 ip=""
+    info "esperando IP en ${WIFI_PRIMARY} (max 45s, progreso cada 3s)..."
+    local waited=0 ip="" ifc_all
+    local -a _ifaces=("${WIFI_PRIMARY}")
+    [[ -n "${WIFI_SECONDARY}" ]] && _ifaces+=("${WIFI_SECONDARY}")
+
     while [[ "${waited}" -lt 45 ]]; do
+        # Reportar cada iface configurada
+        printf '  [%2ds] ' "${waited}" >&2
+        for ifc_all in "${_ifaces[@]}"; do
+            local _state _ipx
+            _state="$(nmcli -t -f DEVICE,STATE dev status 2>/dev/null \
+                | awk -F: -v i="${ifc_all}" '$1==i {print $2}' | head -1)"
+            _ipx="$(ip -4 -o addr show "${ifc_all}" 2>/dev/null \
+                | awk '{print $4}' | head -1)"
+            printf '%s=%s%s ' "${ifc_all}" "${_state:-?}" "${_ipx:+(${_ipx})}" >&2
+        done
+        printf '\n' >&2
+
         ip="$(ip -4 -o addr show "${WIFI_PRIMARY}" 2>/dev/null \
             | awk '{print $4}' | head -1)"
         [[ -n "${ip}" ]] && break
+
         sleep 3
         waited=$((waited + 3))
     done
@@ -273,6 +338,26 @@ _root_phase() {
     ln -sfn "${WIFI_REPO_BIN}" "${WIFI_BIN}"
     ok "symlink: ${WIFI_BIN} -> ${WIFI_REPO_BIN}"
 
+    # ---------------------------------------------------------------------
+    # USB WiFi naming: copiar config y aplicar .link por MAC.
+    # El rename se aplica en el proximo boot (no toca el driver ahora).
+    # ---------------------------------------------------------------------
+    mkdir -p "${CONFIG_DIR}"
+    if [[ -f "${SCRIPT_DIR}/config/usb-names.conf" ]]; then
+        # Preservar ediciones locales: si ya existe uno en CONFIG_DIR y
+        # difiere del repo, no lo pisamos -- avisamos.
+        if [[ -f "${CONFIG_DIR}/usb-names.conf" ]] \
+           && ! cmp -s "${SCRIPT_DIR}/config/usb-names.conf" "${CONFIG_DIR}/usb-names.conf"; then
+            warn "usb-names.conf local difiere del repo -- se conserva (edita: wifi usb-names edit)"
+        else
+            cp -a "${SCRIPT_DIR}/config/usb-names.conf" "${CONFIG_DIR}/usb-names.conf"
+            chmod 600 "${CONFIG_DIR}/usb-names.conf"
+        fi
+        if [[ -f "${CONFIG_DIR}/usb-names.conf" ]]; then
+            nm_usb_names_apply "${CONFIG_DIR}/usb-names.conf"
+        fi
+    fi
+
     mkdir -p "${STATE_DIR}"
     cat > "${STATE_DIR}/install.state" <<EOF
 INSTALL_MODE="${INSTALL_MODE}"
@@ -284,27 +369,120 @@ EOF
 
 
     # ---------------------------------------------------------------------
-    # 7. Verificacion final
+    # 7. Verificacion final explicita (PASS/FAIL por check)
     # ---------------------------------------------------------------------
     echo ""
-    section "Verificacion"
-    nm_dev_list
+    section "Verificacion final"
 
-    echo ""
-    if ping -c1 -W2 1.1.1.1 >/dev/null 2>&1; then
-        ok "conectividad OK"
+    local _chk_pass=0 _chk_fail=0
+    _chk() {
+        local label="$1" ok="$2"
+        if [[ "${ok}" == "1" ]]; then
+            printf '  %s[PASS]%s %s\n' "${C_GREEN}" "${C_RESET}" "${label}" >&2
+            _chk_pass=$((_chk_pass + 1))
+        else
+            printf '  %s[FAIL]%s %s\n' "${C_RED}" "${C_RESET}" "${label}" >&2
+            _chk_fail=$((_chk_fail + 1))
+        fi
+    }
+
+    # NetworkManager activo
+    if systemctl is-active NetworkManager >/dev/null 2>&1; then
+        _chk "NetworkManager activo" 1
     else
-        warn "sin conectividad -- revisa: wifi status"
+        _chk "NetworkManager activo" 0
     fi
 
-    echo ""
+    # iwd disabled (fallback manual)
+    if systemctl is-enabled iwd 2>/dev/null | grep -q '^disabled$'; then
+        _chk "iwd disabled (fallback)" 1
+    else
+        _chk "iwd disabled (fallback)" 0
+    fi
+
+    # dhcpcd disabled
+    if systemctl is-enabled dhcpcd 2>/dev/null | grep -q '^disabled$'; then
+        _chk "dhcpcd disabled" 1
+    else
+        _chk "dhcpcd disabled" 0
+    fi
+
+    # Cada antena configurada con IP
+    local _if _ip
+    for _if in "${_ifaces[@]}"; do
+        _ip="$(ip -4 -o addr show "${_if}" 2>/dev/null | awk '{print $4}' | head -1)"
+        if [[ -n "${_ip}" ]]; then
+            _chk "antena ${_if} con IP (${_ip})" 1
+        else
+            _chk "antena ${_if} con IP" 0
+        fi
+    done
+
+    # Conectividad
+    if ping -c1 -W2 1.1.1.1 >/dev/null 2>&1; then
+        _chk "conectividad a internet" 1
+    else
+        _chk "conectividad a internet" 0
+    fi
+
+    # Symlink
+    if [[ -L "${WIFI_BIN}" ]] && [[ "$(readlink -f "${WIFI_BIN}")" == "${WIFI_REPO_BIN}" ]]; then
+        _chk "symlink ${WIFI_BIN}" 1
+    else
+        _chk "symlink ${WIFI_BIN}" 0
+    fi
+
+    # install.state
+    if [[ -f "${STATE_DIR}/install.state" ]]; then
+        _chk "install.state" 1
+    else
+        _chk "install.state" 0
+    fi
+
+    # Tailscale
+    if command -v tailscale >/dev/null 2>&1; then
+        _chk "tailscale instalado" 1
+    else
+        _chk "tailscale instalado" 0
+    fi
+
+    # USB naming (si hay config)
+    if [[ -f "${CONFIG_DIR}/usb-names.conf" ]]; then
+        local _link_count
+        _link_count="$(find "${NM_USB_LINK_DIR}" -maxdepth 1 -name "10-wifi-setup-*.link" 2>/dev/null | wc -l)"
+        if [[ "${_link_count}" -gt 0 ]]; then
+            _chk "usb-names: ${_link_count} link(s) escritos (proximo boot)" 1
+        else
+            _chk "usb-names: .link escritos" 0
+        fi
+    fi
+
+    echo "" >&2
+    if [[ "${_chk_fail}" -eq 0 ]]; then
+        printf '  %s%s  OK: %d checks, todo en orden%s\n' \
+            "${C_GREEN}" "${C_BOLD}" "${_chk_pass}" "${C_RESET}" >&2
+    else
+        printf '  %s%s  ATENCION: %d ok, %d fallo(s)%s\n' \
+            "${C_RED}" "${C_BOLD}" "${_chk_pass}" "${_chk_fail}" "${C_RESET}" >&2
+    fi
+
+    echo "" >&2
+    nm_dev_list
+
+    echo "" >&2
     vpn_print_help
 
-    echo ""
-    echo -e "${C_GREEN}${C_BOLD}  Instalacion completa.${C_RESET}"
-    echo -e "${C_GREEN}  Log    : ${LOG_FILE}${C_RESET}"
-    echo -e "${C_GREEN}  Comando: sudo wifi help${C_RESET}"
-    echo ""
+    echo "" >&2
+    if [[ "${_chk_fail}" -eq 0 ]]; then
+        echo -e "${C_GREEN}${C_BOLD}  Instalacion completa.${C_RESET}" >&2
+    else
+        echo -e "${C_RED}${C_BOLD}  Instalacion termino con ${_chk_fail} fallo(s).${C_RESET}" >&2
+    fi
+    echo -e "${C_GREEN}  Log    : ${LOG_FILE}${C_RESET}" >&2
+    echo -e "${C_GREEN}  Comando: sudo wifi help${C_RESET}" >&2
+    echo "" >&2
+
+    [[ "${_chk_fail}" -eq 0 ]]
 }
 
 # ---------------------------------------------------------------------------

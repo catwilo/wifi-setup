@@ -80,13 +80,22 @@ backup_file() {
 }
 
 # ---------------------------------------------------------------------------
-# sweep_legacy_install -- limpia restos del instalador viejo (/opt/wifi-setup,
-# units wifi-setup@, binarios sueltos). Idempotente.
+# sweep_legacy_install -- limpia restos de esquemas previos de wifi-setup.
+# Idempotente. Cubre:
+#   - units wifi-setup@*.service (template viejo)
+#   - binarios sueltos en /usr/local/bin (wfs, wifi-panic, ...)
+#   - /opt/wifi-setup (modelo copy, reemplazado por symlink)
+#   - /etc/udev/rules.d/*-wlan*.network y *-wlan*.rules (renombrado obsoleto)
+#   - /etc/wpa_supplicant/wpa_supplicant-<iface>.conf huerfanos (iface
+#     que ya no existe; NM no los usa)
+#   - /etc/dhcpcd.conf: bloque "interface wlan*" creado por versiones viejas
+#     (dhcpcd ya no gestiona estas ifaces)
 # ---------------------------------------------------------------------------
 sweep_legacy_install() {
     local found=0
     local unit
 
+    # 1. Units template viejas
     while IFS= read -r unit; do
         [[ -z "${unit}" ]] && continue
         systemctl stop    "${unit}" 2>/dev/null || true
@@ -100,6 +109,7 @@ sweep_legacy_install() {
         found=1
     fi
 
+    # 2. Binarios sueltos en /usr/local/bin
     local b
     for b in wifi-panic wfs wifi-status wifi-list wifi-passwd wifi-showpass; do
         if [[ -L "/usr/local/bin/${b}" || -f "/usr/local/bin/${b}" ]]; then
@@ -108,10 +118,55 @@ sweep_legacy_install() {
         fi
     done
 
+    # 3. /opt/wifi-setup (modelo copy viejo)
     if [[ -d /opt/wifi-setup ]]; then
         rm -rf /opt/wifi-setup
         found=1
         info "eliminado /opt/wifi-setup (esquema viejo)"
+    fi
+
+    # 4. Udev rules con nombre de iface obsoleto (wlan/wlan0/wlan1).
+    #    Estas reglas venian de esquemas previos que renombraban MACs por
+    #    iface. NM no las necesita: aplica cloned-mac-address desde el
+    #    perfil. Renombrar por MAC/iface rompe si la MAC cambia.
+    local udev_rule
+    for udev_rule in /etc/udev/rules.d/*-wlan*.network /etc/udev/rules.d/*-wlan*.rules; do
+        [[ -e "${udev_rule}" ]] || continue
+        rm -f "${udev_rule}"
+        found=1
+        info "udev rule legacy eliminada: ${udev_rule}"
+    done
+
+    # 5. wpa_supplicant-<iface>.conf huerfanos (iface ya no existe).
+    #    NM tiene sus propios .nmconnection; estos archivos no se usan.
+    local wpa_conf wpa_iface
+    for wpa_conf in /etc/wpa_supplicant/wpa_supplicant-*.conf; do
+        [[ -e "${wpa_conf}" ]] || continue
+        wpa_iface="$(basename "${wpa_conf}" .conf | sed 's/^wpa_supplicant-//')"
+        if ! ip link show "${wpa_iface}" >/dev/null 2>&1; then
+            rm -f "${wpa_conf}"
+            found=1
+            info "wpa_supplicant config huerfana eliminada: ${wpa_conf} (iface '${wpa_iface}' no existe)"
+        fi
+    done
+
+    # 6. dhcpcd.conf: eliminar bloques "interface wlan*" del esquema viejo.
+    #    dhcpcd ya no gestiona las WiFi (NM lo hace). Dejar el bloque
+    #    generaba conflicto si dhcpcd se reactivaba por error.
+    if [[ -f /etc/dhcpcd.conf ]] && grep -qE '^interface wlan' /etc/dhcpcd.conf 2>/dev/null; then
+        local tmp
+        tmp="$(mktemp /etc/dhcpcd.conf.wifisetup.XXXXXX)"
+        awk '
+            /^interface wlan/ { skip=1; next }
+            skip && /^interface / { skip=0 }
+            skip && /^[^[:space:]]/ { skip=0 }
+            skip { next }
+            { print }
+        ' /etc/dhcpcd.conf > "${tmp}"
+        cp -a /etc/dhcpcd.conf /etc/dhcpcd.conf.wifisetup.bak 2>/dev/null || true
+        mv "${tmp}" /etc/dhcpcd.conf
+        found=1
+        info "bloques 'interface wlan*' eliminados de /etc/dhcpcd.conf"
     fi
 
     if [[ "${found}" -eq 1 ]]; then
