@@ -580,9 +580,28 @@ _relaunch_in_tmux() {
     fi
 
     if [[ -n "${target_session}" ]]; then
+        # Crear la ventana en la sesion existente.
         tmux new-window -t "${target_session}:" -n wifi-install "${inner}"
         tmux select-window -t "${target_session}:wifi-install"
-        exit 0
+
+        if [[ -n "${TMUX:-}" ]]; then
+            # Ya estamos dentro de tmux (cliente local): la ventana
+            # queda visible y salimos -- el usuario sigue en su tmux.
+            exit 0
+        fi
+
+        # Fuera de tmux (tipicamente via nssh -t): attachar a la
+        # sesion para mantener viva la conexion SSH y ver el install.
+        # NO usamos -d: si hay otro cliente attachado a esa sesion,
+        # tmux aborta con "sessions should be nested"; en ese caso
+        # avisamos y salimos sin romper nada.
+        info "attachando a sesion tmux \"${target_session}\"..."
+        if ! tmux attach -t "${target_session}"; then
+            warn "no se pudo attachar (probable: otra sesion activa en \"${target_session}\")"
+            warn "la ventana \"wifi-install\" ya fue creada -- attachate a mano:"
+            warn "  tmux attach -t ${target_session}"
+            exit 0
+        fi
     fi
 
     # Sin sesiones tmux. Si no hay TTY no podemos attachar.
