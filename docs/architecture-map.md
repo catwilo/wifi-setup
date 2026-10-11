@@ -1,58 +1,166 @@
-# wifi-setup — Arquitectura: mapa de archivos y responsabilidades (recuperado de .ctx.db, bloque 9, done)
+# wifi-setup -- Architecture
 
-## Flujo general
-bin/wifi (entrypoint unico) -> install.sh|uninstall.sh|checks.sh -> source de lib/*.sh segun comando.
+## Stack
 
-## bin/wifi
-Dispatcher CLI unico. 23 subcomandos (install/status/add/switch/useif/setmac/uplink/lan/etc). Todo el resto se invoca via "sudo wifi <cmd>" una vez instalado.
+    NetworkManager         WiFi + ethernet + DHCP + NAT (backbone)
+    wpa_supplicant         backend WiFi de NM (por defecto)
+    iwd                    fallback manual (instalado, parado, disabled)
+    Tailscale              VPN (instalado, apagado hasta `wifi vpn up`)
 
-## install.sh
-Instalador principal. Auto-detecta modo server/client, interfaces, corre en ventana byobu (supervivencia SSH), limpia instalacion previa, escribe systemd units, guarda install.state.
+No se usa: dhcpcd, systemd-networkd, NetworkManager plugins externos.
 
-## uninstall.sh
-Desinstalador. Confirmacion interactiva, detiene servicios, limpia NAT dirigido (fix #15), pregunta si borrar /opt/wifi-setup.
+## Capas
 
-## checks.sh
-Diagnostico post-install. Lee install.state, corre checks comunes (SSH/Tailscale/internet/DNS) + especificos por modo server/client, hints causa/fix por cada fallo.
+    bin/wifi            dispatcher CLI puro
+        -> install.sh | uninstall.sh | checks.sh
+        -> source lib/*.sh segun subcomando
+        -> lib/*.sh llaman nmcli
 
-## lib/log.sh
-Logging base: niveles ok/warn/err/info/step, spinner TTY-aware, escribe a archivo sin ANSI. Todo lo demas depende de esto.
+`bin/wifi` no ejecuta logica de negocio: cada `_cmd_*` valida args,
+sourcea el lib correspondiente, llama una funcion, imprime resultado.
 
-## lib/common.sh
-Base compartida obligatoria (source primero en todo script). Define BASE_DIR/STATE_DIR/CONFIG_DIR, log()/die(), require_root, validate_interface, backup_file/rollback_network, sweep_legacy_install.
+## Responsabilidades por archivo
 
-## lib/deps.sh
-Instala paquetes apt segun modo (wpasupplicant/iptables/systemd/etc). Usado solo por install.sh.
+### Raiz
 
-## lib/detect.sh
-Deteccion NO destructiva (solo lee): interfaz SSH activa, IP local SSH. Usado por install.sh, useif, uplink, lan para no cortar el acceso.
+    bin/wifi            Dispatcher. Solo parse + dispatch. Sin logica real.
+    install.sh          Instalador. Instala stack, crea perfiles, no activa LAN/VPN.
+    uninstall.sh        Desinstalador. Revierte install sin tocar perfiles NM.
+    checks.sh           Verificacion post-install (read-only).
+    .shellcheckrc       Disables justificados (SC1091 path dinamico, SC2034 globals).
 
-## lib/net.sh
-Interfaces wifi/usb/plan + CRUD de bloques network={} en wpa_supplicant.conf preservando lo demas. Usado por bin/wifi (add/switch/band/networks) e install.sh.
+### lib/
 
-## lib/forward.sh
-IP estatica, NAT/forwarding, MAC persistente Windows-like. set_mac_hot tiene rollback completo; apply_persistent_mac_link/setup_upstream_dhcpcd (camino automatico) NO (fix pendiente #16).
+    common.sh           Bootstrap obligatorio: set -Eeuo, dirs, colores,
+                        source log.sh + safe.sh, die/require_root/require_dirs,
+                        validate_interface, backup_file, sweep_legacy_install.
 
-## lib/lan.sh
-Rol del cable LAN (server/client/router), unit systemd propio. Duplica NAT de forward.sh de forma inline (decision pendiente #17).
+    log.sh              Output: ok/warn/err/info/section/step. Todo a stderr
+                        + archivo sin ANSI.
 
-## lib/uplink.sh
-Failover PRIMARY/FALLBACK no-preemptivo via eventos carrier (no polling). Persiste en uplink-role.conf. Disparado por el hook dhcpcd.
+    safe.sh             Proteccion contra perdida de acceso remoto:
+                        snapshot + canary + watchdog + rollback automatico.
+                        Toda operacion critica pasa por safe_run. Configurable
+                        (canary default 100.103.104.19, timeout por operacion).
 
-## lib/survival.sh
-Mantiene vivo el install si cae el SSH, usando byobu/tmux como ventana de primer plano. Solo usado por install.sh.
+    detect.sh           Deteccion no destructiva: SSH iface + local IP.
 
-## lib/ssh.sh
-Hardening SSH (puerto 22, cripto moderna, keepalive). Valida config con sshd -t antes de reiniciar, revierte si es invalida.
+    nm.sh               Wrapper fino sobre nmcli. Ningun otro modulo llama
+                        nmcli directo. Si NM cambia su interfaz, se ajusta aqui.
 
-## lib/tailscale.sh
-Instala Tailscale, lo deja activo pero sin conectar (requiere "tailscale up" manual).
+    radio.sh            Antenas WiFi (nativa + USB). Roles primary/secondary
+                        (persistente) + override de sesion. Up/down con safe_run.
 
-## dhcpcd-hooks/90-wifi-setup-uplink
-Hook invocado por dhcpcd en NOCARRIER, llama a "wifi uplink-event". Ignora a proposito NOCARRIER_ROAMING (evita falsos positivos).
+    lan.sh              Cable ethernet. Perfiles NM (manual/shared/auto) con
+                        autoconnect=off. Activacion manual con `wifi lan up`.
 
-## Prioridad al momento de este snapshot (miko next --all)
-#15 P1 DONE (fix de este bloque) -- #16 P1 pendiente (rollback MAC automatico) -- #7/#19-instalacion P1 pendiente (instalar fix en nodos) -- #17 P2 pendiente (decision diseno NAT duplicado) -- #3/#6 P1 sin empezar (comandos faltantes bin/wifi, noemap).
+    vpn.sh              Tailscale: install + up/down/status + routes.
+                        install.sh deja el daemon activo sin conectar.
 
----
-*Recuperado del .ctx.db original (bloque 9, status done) de este repo, sesion 2026-08-28. Ver ctx-archive.sql para el dump SQL completo.*
+    ssh.sh              Hardening SSH con rollback si sshd -t falla.
+
+    deps.sh             Instalacion apt: NetworkManager + iwd + utilidades.
+
+## Flujo de `install.sh`
+
+    require_root
+    -> relaunch en tmux 'wifi-setup' (supervivencia SSH)
+    -> limpieza previa (idempotente)
+    -> deteccion: SSH iface + antenas WiFi (USB=PRIMARY, nativa=SECONDARY)
+    -> install_deps (NM + iwd + utilities)
+    -> migracion stack: stop iwd/dhcpcd/networkd, start NM
+    -> prompts SSID/PSK (solo si no hay perfiles previos)
+    -> crear perfiles NM por antena + persistir roles
+    -> configure_ssh
+    -> vpn_install (daemon activo, sin conectar)
+    -> symlink /usr/local/bin/wifi -> repo/bin/wifi
+    -> guardar install.state + checks.sh
+
+NO configura el cable LAN (eso es `wifi lan setup`).
+NO conecta Tailscale (eso es `wifi vpn up`).
+
+## Flujo de `wifi <cmd>` (runtime)
+
+    wifi status         NM + antenas + conexiones + LAN + VPN + internet
+    wifi radio *        antenas: list/primary/secondary/use/up/down
+    wifi add <ssid>     crear perfil WiFi en la antena activa
+    wifi switch <ssid>  activar perfil guardado
+    wifi lan setup ...  crear perfil del cable (NO activar)
+    wifi lan up|down    activar/desactivar perfil LAN
+    wifi vpn up|down    conectar/desconectar Tailscale
+    wifi panic          reiniciar NM + reconectar antenas
+    wifi safe log       historico de operaciones criticas
+
+## Seguridad remota (safe_run)
+
+Toda operacion que pueda cortar acceso SSH pasa por `safe_run <label> <timeout> <cmd...>`:
+
+    1. Snapshot: guarda perfiles NM, wpa_supplicant, rutas, servicios.
+    2. Canary: watchdog en background pinguea <canary> cada 2s.
+    3. Aplicar: corre el comando.
+    4. Esperar <timeout> segundos.
+    5. Si el canary falla 3 veces seguidas: rollback automatico.
+    6. Si sobrevive <timeout>: exito, canary se detiene.
+
+Configuracion:
+    - canary default: 100.103.104.19 (persistible con `wifi canary set`)
+    - timeout: por operacion (radio up=60, radio down=45, lan up=75, etc.)
+    - logs: BASE_DIR/logs/ops.log
+    - snapshots: BASE_DIR/state/snapshots/
+
+## Persistencia
+
+    STATE_DIR/install.state         iface primaria/secundaria, ssh iface
+    STATE_DIR/radio.state           RADIO_PRIMARY, RADIO_SECONDARY
+    STATE_DIR/radio.session         SESSION_OVERRIDE (no persiste)
+    STATE_DIR/lan.state             LAN_IFACE, LAN_MODE, LAN_IP, LAN_GW
+    CONFIG_DIR/canary.default       canary IP o alias
+    LOG_DIR/wifi-setup.log          log general
+    LOG_DIR/ops.log                 historico de operaciones safe
+    LOG_DIR/uplink-hook.log         (legacy, ya no se escribe)
+
+## Decisiones no obvias
+
+### Por que NetworkManager y no iwd + dhcpcd
+
+NM resuelve nativo todo lo que el modelo anterior hacia a mano: gestion de
+multiples interfaces, perfiles por red con prioridad, DHCP por iface, MAC
+clonada, NAT (`ipv4.method shared`), IP estatica (`ipv4.method manual`).
+iwd queda instalado, parado, disabled -- fallback manual si NM falla.
+
+### Por que safe_run con canary a un nodo externo
+
+Los comandos se mandan por nssh via Tailscale. Si un cambio rompe WiFi o
+rutas, la sesion SSH muere y no hay forma de mandar "rollback". El canary
+pinguea un nodo externo (tx1 por defecto): si tx1 deja de responder 3 veces
+seguidas, el watchdog asume que perdimos acceso y restaura el snapshot sin
+esperar ordenes. La sesion vuelve sola cuando el acceso se restablece.
+
+### Por que timeout por operacion y no global
+
+Subir una antena puede tardar 5s; subir una LAN con NAT + DHCP + verificacion
+puede tardar 60s. Un timeout unico seria o muy corto (rollback innecesario)
+o muy largo (esperas largas cuando hay fallo real). Cada comando define su
+default apropiado, siempre override con `--timeout N`.
+
+### Por que installer NO activa el cable LAN
+
+El cable LAN sirve para conectar a OTRO equipo (compartir internet o red
+directa). Si el instalador lo activara automaticamente, cambiaria la ruta
+default del equipo sin que el usuario lo pida, potencialmente rompiendo el
+acceso SSH. Con `autoconnect=off` el perfil existe pero no molesta hasta
+que el usuario hace `wifi lan up`.
+
+### Por que installer NO conecta Tailscale
+
+`tailscale up` requiere autenticacion interactiva (URL + navegador) y
+expone el nodo a la red del tailnet. Debe ser una decision explicita del
+usuario, no un efecto secundario del instalador.
+
+### Por que los roles de antena son solo prioridad
+
+Tener dos antenas WiFi no significa que una deba estar apagada. Ambas
+pueden estar conectadas a redes distintas simultaneamente (una a la red de
+casa, otra a un hotspot). PRIMARY/SECONDARY solo controla la prioridad
+de ruta cuando ambas tienen internet. `wifi radio down` es la unica forma
+de apagar una antena, y siempre con `safe_run`.

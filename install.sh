@@ -202,7 +202,6 @@ ok "NetworkManager activo"
 echo ""
 section "Configuracion WiFi"
 
-_nm_require_no_root() { nm_require; }
 nm_require
 
 declare -A SSID_BY_IFACE
