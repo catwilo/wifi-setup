@@ -79,6 +79,49 @@ systemd-networkd:inactive:disabled
 SERVICES
 }
 
+
+# ---------------------------------------------------------------------------
+# Helpers de deteccion por iface.
+# ---------------------------------------------------------------------------
+
+# _doctor_driver_of <iface> -- imprime el driver de red de la iface.
+# USB WiFi expone varias interfaces; la de red es la que tiene
+# .../net/<iface> hija. Fallback: driver del device (PCI o simple).
+_doctor_driver_of() {
+    local iface="$1"
+    local ifdir="/sys/class/net/${iface}/device"
+    local sub driver
+
+    if [[ -d "${ifdir}" ]]; then
+        for sub in "${ifdir}"/*/driver; do
+            [[ -L "${sub}" ]] || continue
+            driver="$(basename "$(readlink -f "${sub}" 2>/dev/null)" 2>/dev/null)"
+            case "${driver}" in
+                usb|hub|btusb|"") continue ;;
+            esac
+            if [[ -d "${sub%/driver}/net/${iface}" ]]; then
+                echo "${driver}"
+                return 0
+            fi
+        done
+    fi
+
+    driver="$(basename "$(readlink -f "${ifdir}/driver" 2>/dev/null)" 2>/dev/null)"
+    echo "${driver:-?}"
+}
+
+# _doctor_permanent_mac_of <iface> -- MAC de fabrica (permaddr) o la actual.
+_doctor_permanent_mac_of() {
+    local iface="$1"
+    local perm
+    perm="$(ip link show "${iface}" 2>/dev/null \
+        | grep -oE 'permaddr [0-9a-f:]+' | awk '{print $2}' | head -1)"
+    if [[ -z "${perm}" ]]; then
+        perm="$(cat "/sys/class/net/${iface}/address" 2>/dev/null || echo "?")"
+    fi
+    echo "${perm}"
+}
+
 # ---------------------------------------------------------------------------
 # Chequeo 2: antenas fisicas (kernel + NM).
 # ---------------------------------------------------------------------------
@@ -111,8 +154,8 @@ _doctor_check_radios() {
             bus="?"
         fi
 
-        driver="$(basename "$(readlink -f "/sys/class/net/${iface}/device/driver" 2>/dev/null)" 2>/dev/null || echo "?")"
-        mac="$(cat "/sys/class/net/${iface}/address" 2>/dev/null || echo "?")"
+        driver="$(_doctor_driver_of "${iface}")"
+        mac="$(_doctor_permanent_mac_of "${iface}")"
 
         state="$(nmcli -t -f DEVICE,STATE,CONNECTION dev status 2>/dev/null \
             | awk -F: -v i="${iface}" '$1==i {print $2"|"$3}')"
