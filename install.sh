@@ -93,6 +93,17 @@ _root_phase() {
     source "${SCRIPT_DIR}/lib/vpn.sh"
     source "${SCRIPT_DIR}/lib/ssh.sh"
 
+    # ---------------------------------------------------------------------
+    # BASE_DIR: crear YA con dueno del usuario real. Si el script falla
+    # despues (timeout de IP, error de apt, etc.), el directorio queda
+    # escribible por el usuario -- un fallo no debe dejar permisos rotos.
+    # ---------------------------------------------------------------------
+    _base_owner="${SUDO_USER:-root}"
+    mkdir -p "${BASE_DIR}" "${STATE_DIR}" "${LOG_DIR}" "${CONFIG_DIR}"
+    chown -R "${_base_owner}:${_base_owner}" "${BASE_DIR}"
+    chmod 700 "${BASE_DIR}" "${STATE_DIR}" "${LOG_DIR}" "${CONFIG_DIR}"
+    unset _base_owner
+
     local INSTALL_MODE="server"
     local BIN_DIR="/usr/local/bin"
     local WIFI_BIN="${BIN_DIR}/wifi"
@@ -271,9 +282,6 @@ SSH_IFACE="${SSH_IFACE}"
 EOF
     chmod 600 "${STATE_DIR}/install.state"
 
-    if [[ -n "${SUDO_USER:-}" ]]; then
-        chown -R "${SUDO_USER}:${SUDO_USER}" "${BASE_DIR}" 2>/dev/null || true
-    fi
 
     # ---------------------------------------------------------------------
     # 7. Verificacion final
