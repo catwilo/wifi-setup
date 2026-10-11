@@ -1,60 +1,67 @@
 #!/usr/bin/env bash
-# lib/deps.sh — instalación de dependencias por modo
+# lib/deps.sh -- instalacion de dependencias apt.
+#
+# RESPONSABILIDAD UNICA: asegurar los paquetes que wifi-setup necesita.
+#
+# STACK:
+#   - NetworkManager       backbone WiFi + ethernet + DHCP + NAT
+#   - iwd                  fallback manual (instalado, NO activo)
+#   - iproute2, curl, ping utilidades base
+#
+# NO instalamos wpa_supplicant ni dhcpcd ni systemd-networkd: NM trae
+# su propio backend y gestor DHCP; systemd-networkd no se usa.
+#
+# Requiere: common.sh + log.sh cargados antes.
 
-_apt_ready=0
-ensure_apt() {
-    if [[ "${_apt_ready}" -eq 0 ]]; then
-        info "actualizando índice apt..."
+_apt_updated=0
+
+# ---------------------------------------------------------------------------
+# _apt_update_once -- apt-get update una sola vez por proceso.
+# ---------------------------------------------------------------------------
+_apt_update_once() {
+    if [[ "${_apt_updated}" -eq 0 ]]; then
+        info "apt-get update"
         apt-get update -qq \
-            || die "apt-get update falló — verifica conexión a internet y /etc/apt/sources.list"
-        _apt_ready=1
+            || die "apt-get update fallo -- verifica conexion y /etc/apt/sources.list"
+        _apt_updated=1
     fi
 }
 
+# ---------------------------------------------------------------------------
+# install_pkg <cmd> <pkg>
+# Instala <pkg> si <cmd> no esta en PATH.
+# ---------------------------------------------------------------------------
 install_pkg() {
     local cmd="$1" pkg="$2"
-    if ! command -v "${cmd}" >/dev/null 2>&1; then
-        info "instalando dependencia: ${pkg} (para '${cmd}')..."
-        ensure_apt
-        apt-get install -y --no-install-recommends "${pkg}" \
-            || die "no se pudo instalar ${pkg} — verifica apt: apt-cache show ${pkg}"
-    else
+    if command -v "${cmd}" >/dev/null 2>&1; then
         info "ok: ${cmd} (${pkg})"
+        return 0
     fi
+    info "instalando: ${pkg} (para '${cmd}')"
+    _apt_update_once
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${pkg}" \
+        || die "no se pudo instalar ${pkg}"
 }
 
-install_deps_server() {
-    info "instalando dependencias modo SERVIDOR..."
+# ---------------------------------------------------------------------------
+# install_deps -- todas las dependencias del stack NM.
+# ---------------------------------------------------------------------------
+install_deps() {
+    info "instalando dependencias (NetworkManager + utilidades)..."
 
-    # Core
-    install_pkg "wpa_passphrase"  "wpasupplicant"
-    install_pkg "ip"              "iproute2"
-    install_pkg "iptables"        "iptables"
-    install_pkg "curl"            "curl"
-    install_pkg "ping"            "iputils-ping"
+    install_pkg nmcli            network-manager
+    install_pkg iwctl            iwd
+    install_pkg ip               iproute2
+    install_pkg curl             curl
+    install_pkg ping             iputils-ping
 
-    # iptables-persistent (para NAT persistente)
-    if ! dpkg -l iptables-persistent >/dev/null 2>&1; then
-        info "instalando iptables-persistent..."
-        ensure_apt
-        DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            iptables-persistent netfilter-persistent \
-            || die "no se pudo instalar iptables-persistent"
-    fi
+    # Estado del stack segun el diseno:
+    #   NM activo + enabled.
+    #   iwd instalado pero parado + disabled -- fallback manual.
+    systemctl enable NetworkManager  >/dev/null 2>&1 || true
+    systemctl start  NetworkManager  >/dev/null 2>&1 || true
+    systemctl disable iwd            >/dev/null 2>&1 || true
+    systemctl stop    iwd            >/dev/null 2>&1 || true
 
-    # systemd-networkd para gestión de interfaces
-    install_pkg "networkctl" "systemd"
-
-    info "dependencias servidor: OK"
-}
-
-install_deps_client() {
-    info "instalando dependencias modo CLIENTE..."
-
-    install_pkg "wpa_passphrase"  "wpasupplicant"
-    install_pkg "ip"              "iproute2"
-    install_pkg "curl"            "curl"
-    install_pkg "ping"            "iputils-ping"
-
-    info "dependencias cliente: OK"
+    ok "dependencias instaladas"
 }

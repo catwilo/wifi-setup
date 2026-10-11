@@ -1,165 +1,216 @@
 #!/usr/bin/env bash
-# lib/lan.sh -- rol del cable LAN (enp4s0): server | client | router (#7).
-# Manual, persistente a reinicio. server/client = par peer-to-peer con NAT
-# bidireccional (cada uno comparte su upstream si lo tiene). router = solo
-# conectividad via DHCP del router, sin NAT.
-# Persistencia: STATE_DIR/lan-role.conf + systemd unit wifi-setup-lan.service
+# lib/lan.sh -- configuracion del cable LAN (ethernet).
+#
+# RESPONSABILIDAD UNICA: crear, activar y desactivar el perfil NM del
+# cable ethernet para conectar con otro equipo por red directa.
+#
+# MODELO:
+#   - Perfil NM con autoconnect=off: la configuracion existe y sobrevive
+#     reboot, pero NO se activa automaticamente. El usuario la activa
+#     cuando conecta el cable.
+#   - Modos:
+#       server   IP estatica (default 1.2.3.2/24) + NAT (shared) si hay
+#                upstream, para compartir internet con el otro equipo.
+#       client   IP estatica (default 1.2.3.1/24) + gateway 1.2.3.2,
+#                para recibir internet del otro equipo.
+#       router   DHCP del router conectado al cable, sin NAT.
+#       auto     DHCP del router, sin configuracion propia.
+#   - IP configurable: wifi lan setup server --ip 10.0.0.1/24
+#
+# Persistencia: STATE_DIR/lan.state con LAN_IFACE/LAN_MODE/LAN_IP/LAN_GW.
+#
+# Requiere: common.sh + nm.sh + log.sh cargados antes.
 
-LAN_CONF="${STATE_DIR}/lan-role.conf"
-LAN_UNIT="/etc/systemd/system/wifi-setup-lan.service"
+LAN_STATE_FILE="${STATE_DIR}/lan.state"
+LAN_PROFILE="wifi-setup-lan"
 
 # ---------------------------------------------------------------------------
-# Leer config actual. Exporta LAN_IFACE, LAN_MODE, LAN_UPSTREAM.
+# _lan_load_state -- carga LAN_IFACE/LAN_MODE/LAN_IP/LAN_GW.
 # ---------------------------------------------------------------------------
-lan_load() {
-    LAN_IFACE=""; LAN_MODE=""; LAN_UPSTREAM=""
-    [[ -f "${LAN_CONF}" ]] || return 1
+_lan_load_state() {
+    LAN_IFACE=""
+    LAN_MODE=""
+    LAN_IP=""
+    LAN_GW=""
+    [[ -f "${LAN_STATE_FILE}" ]] || return 0
     # shellcheck source=/dev/null
-    source "${LAN_CONF}"
+    source "${LAN_STATE_FILE}"
+}
+
+# _lan_save_state -- persiste los valores actuales.
+_lan_save_state() {
+    mkdir -p "${STATE_DIR}"
+    cat > "${LAN_STATE_FILE}" <<EOF
+LAN_IFACE="${LAN_IFACE}"
+LAN_MODE="${LAN_MODE}"
+LAN_IP="${LAN_IP}"
+LAN_GW="${LAN_GW}"
+EOF
+    chmod 600 "${LAN_STATE_FILE}"
 }
 
 # ---------------------------------------------------------------------------
-# lan_status: imprime estado actual legible.
+# _lan_default_ip <mode> -- imprime la IP estatica por defecto del modo.
 # ---------------------------------------------------------------------------
-lan_status() {
-    if ! lan_load; then
-        echo "lan: no configurado. Usa: wifi lan <server|client|router> [iface]"
+_lan_default_ip() {
+    case "$1" in
+        server) echo "1.2.3.2/24" ;;
+        client) echo "1.2.3.1/24" ;;
+        *)      echo "" ;;
+    esac
+}
+
+# ---------------------------------------------------------------------------
+# _lan_default_gw <mode> -- imprime el gateway por defecto.
+# ---------------------------------------------------------------------------
+_lan_default_gw() {
+    case "$1" in
+        client) echo "1.2.3.2" ;;
+        *)      echo "" ;;
+    esac
+}
+
+# ---------------------------------------------------------------------------
+# _lan_autodetect_iface -- primera ethernet no virtual.
+# ---------------------------------------------------------------------------
+_lan_autodetect_iface() {
+    local iface
+    while IFS=: read -r iface _type _state _conn; do
+        [[ -n "${iface}" ]] || continue
+        echo "${iface}"
         return 0
-    fi
-    echo "IFAZ     : ${LAN_IFACE}"
-    echo "MODO     : ${LAN_MODE}"
-    echo "UPSTREAM : ${LAN_UPSTREAM:-(ninguno, sin NAT)}"
-    echo ""
-    echo "IP actual: $(ip -o -4 addr show "${LAN_IFACE}" 2>/dev/null | awk '{print $4}' | head -1 || echo 'sin IP')"
-    if systemctl is-active wifi-setup-lan >/dev/null 2>&1; then
-        echo "servicio : activo (persistente a reinicio)"
-    else
-        echo "servicio : inactivo"
-    fi
+    done < <(nm_dev_ethernet_list)
+    return 1
 }
 
 # ---------------------------------------------------------------------------
+# lan_setup <server|client|router|auto> [--iface X] [--ip CIDR] [--gw IP]
+# Crea el perfil NM (idempotente, autoconnect=off). NO lo activa.
 # ---------------------------------------------------------------------------
-# _lan_ensure_dhcpcd_allows <iface>
-# Si dhcpcd.conf restringe interfaces via "allowinterfaces" y <iface> no esta
-# en la lista, dhcpcd la rechaza ("invalid configuration") y el modo router
-# nunca obtiene DHCP. Esta funcion la anade a la lista (idempotente). Si no
-# hay directiva allowinterfaces, dhcpcd ya gestiona todo -> no hace nada.
-# Solo ANADE; nunca quita una iface existente (no romper el acceso SSH).
-# ---------------------------------------------------------------------------
-_lan_ensure_dhcpcd_allows() {
-    local iface="$1" conf="/etc/dhcpcd.conf"
-    [[ -f "${conf}" ]] || return 0
-    grep -qE "^allowinterfaces " "${conf}" || return 0
-    if grep -qE "^allowinterfaces .*\b${iface}\b" "${conf}"; then
-        info "lan: ${iface} ya permitido en dhcpcd allowinterfaces"
-        return 0
-    fi
-    cp -a "${conf}" "${conf}.wifisetup.bak" 2>/dev/null || true
-    sed -i "s/^\(allowinterfaces .*\)$/\1 ${iface}/" "${conf}"
-    info "lan: ${iface} anadido a dhcpcd allowinterfaces (era excluido)"
-}
+lan_setup() {
+    nm_require
+    local mode="${1:-}" iface="" ip="" gw=""
+    shift || true
 
-# _lan_write_unit <iface> <mode> <upstream>
-# Escribe y arranca el systemd unit que aplica el rol en cada boot.
-# ---------------------------------------------------------------------------
-_lan_write_unit() {
-    local iface="$1" mode="$2" upstream="$3"
-    local exec_cmd="/bin/bash -c '\
-        ip addr flush dev ${iface} 2>/dev/null || true; \
-        ip link set ${iface} up"
+    case "${mode}" in
+        server|client|router|auto) ;;
+        "") die "uso: wifi lan setup <server|client|router|auto> [--iface X] [--ip CIDR] [--gw IP]" ;;
+        *)  die "modo invalido: '${mode}' (server|client|router|auto)" ;;
+    esac
+
+    while [[ "$#" -gt 0 ]]; do
+        case "$1" in
+            --iface) iface="${2:-}"; shift 2 ;;
+            --ip)    ip="${2:-}";    shift 2 ;;
+            --gw)    gw="${2:-}";    shift 2 ;;
+            *) die "flag desconocido: $1" ;;
+        esac
+    done
+
+    [[ -n "${iface}" ]] || iface="$(_lan_autodetect_iface || true)"
+    [[ -n "${iface}" ]] || die "no se detecto interfaz ethernet -- usa --iface <nombre>"
 
     case "${mode}" in
         server)
-            exec_cmd+="; ip addr add 1.2.3.2/24 dev ${iface} 2>/dev/null || true"
-            if [[ -n "${upstream}" ]]; then
-                exec_cmd+="; sysctl -w net.ipv4.ip_forward=1; \
-                    iptables -t nat -C POSTROUTING -o ${upstream} -j MASQUERADE 2>/dev/null || \
-                        iptables -t nat -A POSTROUTING -o ${upstream} -j MASQUERADE; \
-                    iptables -C FORWARD -i ${iface} -o ${upstream} -j ACCEPT 2>/dev/null || \
-                        iptables -A FORWARD -i ${iface} -o ${upstream} -j ACCEPT; \
-                    iptables -C FORWARD -i ${upstream} -o ${iface} -m state --state RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || \
-                        iptables -A FORWARD -i ${upstream} -o ${iface} -m state --state RELATED,ESTABLISHED -j ACCEPT"
+            [[ -n "${ip}" ]] || ip="$(_lan_default_ip server)"
+            nm_ethernet_create "${LAN_PROFILE}" "${iface}" shared
+            # con method=shared NM asigna la IP de gateway automaticamente;
+            # si el usuario forzo --ip, la fijamos manual con la IP + sharing
+            if [[ -n "${ip}" && "${ip}" != "$(_lan_default_ip server)" ]]; then
+                nm_con_delete "${LAN_PROFILE}"
+                nmcli con add type ethernet con-name "${LAN_PROFILE}" \
+                    ifname "${iface}" ipv4.method shared \
+                    ipv4.addresses "${ip}" >/dev/null
             fi
             ;;
         client)
-            exec_cmd+="; ip addr add 1.2.3.1/24 dev ${iface} 2>/dev/null || true; \
-                ip route del default via 1.2.3.2 2>/dev/null || true; \
-                ip route add default via 1.2.3.2 dev ${iface} metric 200 2>/dev/null || true"
-            if [[ -n "${upstream}" ]]; then
-                exec_cmd+="; sysctl -w net.ipv4.ip_forward=1; \
-                    iptables -t nat -C POSTROUTING -o ${upstream} -j MASQUERADE 2>/dev/null || \
-                        iptables -t nat -A POSTROUTING -o ${upstream} -j MASQUERADE; \
-                    iptables -C FORWARD -i ${iface} -o ${upstream} -j ACCEPT 2>/dev/null || \
-                        iptables -A FORWARD -i ${iface} -o ${upstream} -j ACCEPT; \
-                    iptables -C FORWARD -i ${upstream} -o ${iface} -m state --state RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || \
-                        iptables -A FORWARD -i ${upstream} -o ${iface} -m state --state RELATED,ESTABLISHED -j ACCEPT"
-            fi
+            [[ -n "${ip}" ]] || ip="$(_lan_default_ip client)"
+            [[ -n "${gw}" ]] || gw="$(_lan_default_gw client)"
+            nm_ethernet_create "${LAN_PROFILE}" "${iface}" manual "${ip}" "${gw}"
             ;;
         router)
-            exec_cmd+="; dhcpcd -n ${iface} 2>/dev/null || true"
+            nm_ethernet_create "${LAN_PROFILE}" "${iface}" auto
+            ;;
+        auto)
+            nm_ethernet_create "${LAN_PROFILE}" "${iface}" auto
             ;;
     esac
-    exec_cmd+="'"
 
-    cat > "${LAN_UNIT}" <<EOF
-[Unit]
-Description=wifi-setup: rol LAN persistente (${mode})
-After=network.target network-online.target
-Wants=network-online.target
+    nm_con_set_autoconnect "${LAN_PROFILE}" off
 
-[Service]
-Type=oneshot
-RemainAfterExit=yes
-ExecStart=${exec_cmd}
+    LAN_IFACE="${iface}"
+    LAN_MODE="${mode}"
+    LAN_IP="${ip}"
+    LAN_GW="${gw}"
+    _lan_save_state
 
-[Install]
-WantedBy=multi-user.target
-EOF
-
-    systemctl daemon-reload
-    systemctl enable wifi-setup-lan
-    systemctl restart wifi-setup-lan
+    ok "LAN configurado (${mode}) en ${iface} -- perfil '${LAN_PROFILE}' (autoconnect=off)"
+    info "para activar: wifi lan up"
 }
 
 # ---------------------------------------------------------------------------
-# lan_set_role <mode> [iface] [upstream]
-# mode: server | client | router. iface default enp4s0 si no se indica
-# (interfaz plan conocida en este equipo); valida que exista.
-# upstream solo aplica a server/client (NAT); router nunca usa NAT.
+# lan_up -- activa el perfil LAN con watchdog de acceso remoto.
 # ---------------------------------------------------------------------------
-lan_set_role() {
-    local mode="$1" iface="${2:-enp4s0}" upstream="${3:-}"
+lan_up() {
+    nm_require
+    _lan_load_state
+    nm_con_exists "${LAN_PROFILE}" \
+        || die "perfil LAN '${LAN_PROFILE}' no existe -- corre: wifi lan setup <mode>"
 
-    case "${mode}" in
-        server|client|router) ;;
-        *) die "modo lan invalido: '${mode}' (usa server|client|router)" ;;
-    esac
+    safe_run "lan-up" 75 nm_con_up "${LAN_PROFILE}"
+}
 
-    validate_interface "${iface}"
+# ---------------------------------------------------------------------------
+# lan_down -- desactiva el perfil LAN.
+# ---------------------------------------------------------------------------
+lan_down() {
+    nm_require
+    nm_con_exists "${LAN_PROFILE}" \
+        || die "perfil LAN '${LAN_PROFILE}' no existe"
 
-    local ssh_if
-    ssh_if="$(detect_ssh_iface 2>/dev/null || true)"
-    if [[ -n "${ssh_if}" && "${ssh_if}" == "${iface}" ]]; then
-        warn "lan: ${iface} lleva la sesion SSH activa -- la config se aplica sin bajar la iface"
+    safe_run "lan-down" 45 nm_con_down "${LAN_PROFILE}"
+}
+
+# ---------------------------------------------------------------------------
+# lan_status -- imprime estado actual del perfil LAN.
+# ---------------------------------------------------------------------------
+lan_status() {
+    nm_require
+    _lan_load_state
+
+    if ! nm_con_exists "${LAN_PROFILE}"; then
+        echo "LAN: no configurado"
+        echo "  uso: wifi lan setup <server|client|router|auto>"
+        return 0
     fi
 
-    if [[ "${mode}" != "router" ]] && [[ -z "${upstream}" ]]; then
-        upstream="$(detect_usb_wifi 2>/dev/null || true)"
-        [[ -n "${upstream}" ]] || warn "lan: no se detecto upstream wifi -- ${mode} sin NAT (solo conectividad)"
+    local active iface method
+    active="$(nm_con_get "${LAN_PROFILE}" connection.autoconnect)"
+    iface="$(nm_con_get "${LAN_PROFILE}" connection.interface-name)"
+    method="$(nm_con_get "${LAN_PROFILE}" ipv4.method)"
+
+    echo "LAN"
+    echo "  perfil     : ${LAN_PROFILE}"
+    echo "  iface      : ${iface:-—}"
+    echo "  modo       : ${LAN_MODE:-—}"
+    echo "  ipv4.method: ${method:-—}"
+    echo "  IP         : ${LAN_IP:-—}"
+    echo "  gateway    : ${LAN_GW:-—}"
+    echo "  autoconnect: ${active:-—}"
+
+    if nm_dev_ethernet_list | awk -F: -v i="${iface}" '$1==i && $3=="connected" {found=1} END{exit !found}' 2>/dev/null; then
+        echo "  estado     : ACTIVO"
+    else
+        echo "  estado     : inactivo"
     fi
-    [[ "${mode}" == "router" ]] && upstream=""
+}
 
-    mkdir -p "${STATE_DIR}"
-    cat > "${LAN_CONF}" <<EOF
-LAN_IFACE="${iface}"
-LAN_MODE="${mode}"
-LAN_UPSTREAM="${upstream}"
-EOF
-    chmod 600 "${LAN_CONF}"
-    info "lan roles definidos: IFAZ=${iface} MODO=${mode} UPSTREAM=${upstream:-ninguno}"
-
-    [[ "${mode}" == "router" ]] && _lan_ensure_dhcpcd_allows "${iface}"
-    _lan_write_unit "${iface}" "${mode}" "${upstream}"
-    info "lan: rol '${mode}' aplicado y persistente en ${iface}"
+# ---------------------------------------------------------------------------
+# lan_remove -- borra el perfil LAN y el state.
+# ---------------------------------------------------------------------------
+lan_remove() {
+    nm_require
+    nm_con_delete "${LAN_PROFILE}"
+    rm -f "${LAN_STATE_FILE}"
+    ok "perfil LAN eliminado"
 }

@@ -39,7 +39,7 @@ step() {
     local msg="$1"; shift
     _log_file "[..] ${msg}"
     if [[ "${_TTY}" -eq 1 ]]; then
-        local sp='|/-\' i=0
+        local sp=$'|/-\\' i=0
         ( "$@" ) & local pid=$!
         printf '  %s[..]%s %s ' "${_C_DIM}" "${_C_RST}" "${msg}" >&2
         while kill -0 "${pid}" 2>/dev/null; do
