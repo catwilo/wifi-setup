@@ -51,6 +51,7 @@ install_deps() {
 
     install_pkg nmcli            network-manager
     install_pkg iwctl            iwd
+    install_pkg iw               iw
     install_pkg ip               iproute2
     install_pkg curl             curl
     install_pkg ping             iputils-ping

@@ -354,6 +354,25 @@ _cmd_panic() {
 }
 
 # ---------------------------------------------------------------------------
+# monitor <on|off|status> [iface]
+# Cambia una antena entre managed y monitor, sin tocar las demas.
+# ---------------------------------------------------------------------------
+_cmd_monitor() {
+    local sub="${1:-}"
+    shift || true
+
+    _load nm radio monitor
+    require_root
+
+    case "${sub}" in
+        on)     monitor_on     "${1:-}" ;;
+        off)    monitor_off    "${1:-}" ;;
+        status|"") monitor_status ;;
+        *) _die "uso: wifi monitor <on|off|status> [iface]" ;;
+    esac
+}
+
+# ---------------------------------------------------------------------------
 # doctor [--fix]
 # Diagnostico del stack. Sin flags, solo reporta. Con --fix, corrige
 # los problemas conocidos de forma segura (no destructivo).
@@ -512,6 +531,11 @@ VPN (Tailscale)
   sudo wifi vpn down             desconecta (daemon sigue)
   wifi vpn status                estado y peers
 
+MODO MONITOR (una antena en monitor, la otra sigue conectada)
+  sudo wifi monitor on <iface>  poner iface en monitor
+  sudo wifi monitor off <iface> devolver iface a managed (NM reconecta)
+  wifi monitor status           que ifaces estan en cada modo
+
 DIAGNOSTICO
   sudo wifi doctor              reporte del estado del stack (read-only)
   sudo wifi doctor --fix        aplica los fixes seguros automaticamente
@@ -544,6 +568,7 @@ case "${CMD}" in
     showmac)         _cmd_showmac "$@" ;;
     autoconnect)     _cmd_autoconnect "$@" ;;
     panic)           _cmd_panic ;;
+    monitor)         _cmd_monitor "$@" ;;
     doctor)          _cmd_doctor "$@" ;;
     lan)             _cmd_lan "$@" ;;
     usb-names)       _cmd_usb_names "$@" ;;
