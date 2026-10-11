@@ -235,11 +235,33 @@ radio_clear_session() {
 }
 
 # ---------------------------------------------------------------------------
-# _radio_iface_con <iface> -- imprime el nombre del perfil activo en iface.
+# _radio_iface_con <iface> -- imprime el nombre del perfil WiFi asociado
+# a la iface. Busca entre todos los perfiles por connection.interface-name;
+# si no encuentra, cae al perfil activo del device (compatibilidad).
 # ---------------------------------------------------------------------------
 _radio_iface_con() {
     local iface="$1"
-    nm_dev_wifi_list | awk -F: -v i="${iface}" '$1==i {print $4}'
+    local n iname active
+
+    # Perfil activo del device (si esta conectado).
+    active="$(nmcli -t -f DEVICE,CONNECTION dev status 2>/dev/null \
+        | awk -F: -v i="${iface}" '$1==i && $2!="" {print $2; exit}')"
+    if [[ -n "${active}" ]]; then
+        echo "${active}"
+        return 0
+    fi
+
+    # Buscar por interface-name en todos los perfiles WiFi.
+    while IFS= read -r n; do
+        [[ -n "${n}" ]] || continue
+        iname="$(nmcli -t -g connection.interface-name con show "${n}" 2>/dev/null || true)"
+        if [[ "${iname}" == "${iface}" ]]; then
+            echo "${n}"
+            return 0
+        fi
+    done < <(nmcli -t -f NAME,TYPE con show 2>/dev/null \
+        | awk -F: '$2=="802-11-wireless"{print $1}')
+    return 1
 }
 
 # ---------------------------------------------------------------------------
