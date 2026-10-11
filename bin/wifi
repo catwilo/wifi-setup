@@ -12,7 +12,21 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-_SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Resolver el symlink: /usr/local/bin/wifi apunta al repo. Sin esto,
+# _SELF_DIR seria /usr/local/bin y LIB_DIR /usr/local/lib (no existe).
+_SELF="${BASH_SOURCE[0]}"
+if _real="$(readlink -f "${_SELF}" 2>/dev/null)" && [[ -n "${_real}" ]]; then
+    _SELF="${_real}"
+else
+    while [[ -L "${_SELF}" ]]; do
+        _link="$(readlink "${_SELF}")"
+        case "${_link}" in
+            /*) _SELF="${_link}" ;;
+            *)  _SELF="$(dirname "${_SELF}")/${_link}" ;;
+        esac
+    done
+fi
+_SELF_DIR="$(cd "$(dirname "${_SELF}")" && pwd)"
 
 if [[ -t 1 ]]; then
     _R='\033[0;31m'; _X='\033[0m'
