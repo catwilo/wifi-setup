@@ -39,6 +39,27 @@ HELP
     exit 0
 fi
 
+# ---------------------------------------------------------------------------
+# Guarda de plataforma: wifi-setup es Debian-only. En otras plataformas
+# (Termux, macOS) sale limpiamente sin error -- el repo se distribuye a
+# todos los nodos, pero solo instala en Debian.
+# ---------------------------------------------------------------------------
+_require_debian() {
+    [[ -n "${PREFIX:-}" ]] && [[ -d "${PREFIX}/bin" ]] && return 1  # Termux
+    [[ -r /etc/os-release ]] || return 1
+    # shellcheck disable=SC1091
+    . /etc/os-release
+    case "${ID:-}${ID_LIKE:-}" in
+        *debian*|*ubuntu*) return 0 ;;
+    esac
+    return 1
+}
+
+if ! _require_debian; then
+    info "wifi-setup: plataforma no-Debian -- nada que hacer aqui (exit 0)"
+    exit 0
+fi
+
 require_root
 
 echo ""
