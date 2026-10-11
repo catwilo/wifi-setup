@@ -531,14 +531,25 @@ mkdir -p "${LOG_DIR_USER}"
 
 # ---------------------------------------------------------------------------
 # 4. Relaunch en tmux.
-#    - Ya dentro de tmux: seguir aqui.
-#    - Hay servidor tmux: crear ventana 'wifi-install' y saltar a ella.
-#    - No hay servidor: crear sesion 'wifi-setup' (attacha si hay TTY).
-#    La ventana corre: bash $0 2>&1 | tee -a $log; exit
-#    El 'exit' la cierra al terminar. El 'tee' deja todo en el log.
+#
+# Flags:
+#   WIFI_SETUP_INWIN=1  ya estamos dentro de la ventana del relaunch.
+#                       La ventana es el unico lugar donde el script corre.
+#
+# Comportamiento:
+#   - dentro de la ventana del relaunch -> seguir (no relanzar)
+#   - dentro de tmux (otra ventana)     -> crear ventana en la sesion actual
+#   - hay sesiones tmux abiertas        -> crear ventana en la primera
+#   - sin tmux                          -> crear sesion (attacha si TTY)
+#   - sin tmux y sin TTY                -> abortar con mensaje claro
+#
+# La ventana corre "bash $0 2>&1 | tee -a $log" y sale al terminar, lo
+# que la cierra. El output completo queda en el log.
 # ---------------------------------------------------------------------------
 _relaunch_in_tmux() {
-    [[ -n "${TMUX:-}" ]] && return 0
+    # Ya estamos dentro de la ventana: seguir.
+    [[ "${WIFI_SETUP_INWIN:-}" == "1" ]] && return 0
+
     command -v tmux >/dev/null 2>&1 || {
         warn "tmux no instalado -- corriendo sin ventana (output solo en TTY)"
         return 0
@@ -548,34 +559,46 @@ _relaunch_in_tmux() {
     local log="${LOG_DIR_USER}/install-${ts}.log"
 
     local inner
-    inner="WIFI_SETUP_LOG=$(printf '%q' "${log}") bash $(printf '%q' "$0")"
+    inner="WIFI_SETUP_INWIN=1 WIFI_SETUP_LOG=$(printf '%q' "${log}") bash $(printf '%q' "$0")"
     local a; for a in "$@"; do inner+=" $(printf '%q' "${a}")"; done
     inner="${inner} 2>&1 | tee -a $(printf '%q' "${log}"); exit"
 
-    local first_session
-    first_session="$(tmux ls 2>/dev/null | head -1 | cut -d: -f1 || true)"
+    # Sesion destino:
+    #   dentro de tmux  -> la sesion actual
+    #   fuera de tmux   -> la primera sesion abierta
+    local target_session=""
+    if [[ -n "${TMUX:-}" ]]; then
+        target_session="$(tmux display-message -p '#S' 2>/dev/null || true)"
+    fi
+    if [[ -z "${target_session}" ]]; then
+        target_session="$(tmux ls 2>/dev/null | sed -n '1s/:.*//p')"
+    fi
 
-    if [[ -n "${first_session}" ]]; then
-        info "creando ventana 'wifi-install' en sesion tmux '${first_session}'..."
-        tmux new-window -t "${first_session}" -n wifi-install "${inner}"
-        tmux select-window -t "${first_session}:wifi-install"
-        info "log: ${log}"
+    if [[ -n "${target_session}" ]]; then
+        tmux new-window -t "${target_session}:" -n wifi-install "${inner}"
+        tmux select-window -t "${target_session}:wifi-install"
         exit 0
     fi
 
-    # No hay servidor tmux. Si no hay TTY externo no podemos attachar;
-    # crear una sesion detached dejaria un proceso huerfano invisible.
+    # Sin sesiones tmux. Si no hay TTY no podemos attachar.
     if [[ ! -t 0 && ! -t 1 ]]; then
         die "no hay sesion tmux y no hay TTY -- conectate con: nssh -t <alias>
 y vuelve a correr: bash install.sh"
     fi
 
-    info "creando sesion tmux 'wifi-setup' (te attacha automaticamente)..."
-    info "log: ${log}"
     exec tmux new-session -s wifi-setup -n install "${inner}"
 }
 
 _relaunch_in_tmux "$@"
+
+
+
+
+
+
+
+
+
 
 
 
