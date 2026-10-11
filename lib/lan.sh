@@ -157,7 +157,7 @@ lan_up() {
     nm_con_exists "${LAN_PROFILE}" \
         || die "perfil LAN '${LAN_PROFILE}' no existe -- corre: wifi lan setup <mode>"
 
-    safe_run "lan-up" 75 nm_con_up "${LAN_PROFILE}"
+    nm_con_up "${LAN_PROFILE}"
 }
 
 # ---------------------------------------------------------------------------
@@ -168,7 +168,7 @@ lan_down() {
     nm_con_exists "${LAN_PROFILE}" \
         || die "perfil LAN '${LAN_PROFILE}' no existe"
 
-    safe_run "lan-down" 45 nm_con_down "${LAN_PROFILE}"
+    nm_con_down "${LAN_PROFILE}"
 }
 
 # ---------------------------------------------------------------------------

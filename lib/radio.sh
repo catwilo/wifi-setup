@@ -236,7 +236,7 @@ radio_up() {
     local con; con="$(_radio_iface_con "${iface}")"
     [[ -n "${con}" ]] || die "no hay conexion WiFi asociada a ${iface} -- corre 'wifi add <ssid> ${iface}' primero"
 
-    safe_run "radio-up-${iface}" 60 nm_con_up "${con}"
+    nm_con_up "${con}"
 
     if [[ "${persist}" -eq 1 ]]; then
         nm_con_set_autoconnect "${con}" on
@@ -257,7 +257,7 @@ radio_down() {
     local con; con="$(_radio_iface_con "${iface}")"
     [[ -n "${con}" ]] || { warn "${iface} ya esta inactiva"; return 0; }
 
-    safe_run "radio-down-${iface}" 45 nm_con_down "${con}"
+    nm_con_down "${con}"
 
     if [[ "${persist}" -eq 1 ]]; then
         nm_con_set_autoconnect "${con}" off

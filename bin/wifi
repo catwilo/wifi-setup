@@ -161,7 +161,7 @@ _cmd_add() {
     [[ "${#pass}" -ge 8 ]] || _die "PSK minimo 8 caracteres"
 
     local profile="wifi-${iface}-${ssid}"
-    safe_run "add-${iface}" 60 nm_wifi_create "${profile}" "${iface}" "${ssid}" "${pass}"
+    nm_wifi_create "${profile}" "${iface}" "${ssid}" "${pass}"
     nm_con_set_autoconnect "${profile}" on
     ok "red '${ssid}' agregada en ${iface} (perfil: ${profile})"
 }
@@ -202,7 +202,7 @@ _cmd_switch() {
     nm_con_exists "${profile}" \
         || _die "perfil '${profile}' no existe -- usa: wifi add ${ssid} --iface ${iface}"
 
-    safe_run "switch-${iface}" 75 nm_con_up "${profile}"
+    nm_con_up "${profile}"
 }
 
 # ---------------------------------------------------------------------------
@@ -221,8 +221,7 @@ _cmd_passwd() {
     read -r -s -p "nuevo PSK (min 8): " psk; echo
     [[ "${#psk}" -ge 8 ]] || _die "minimo 8 caracteres"
 
-    safe_run "passwd-${profile}" 60 nmcli con mod "${profile}" \
-        802-11-wireless-security.psk "${psk}"
+    nmcli con mod "${profile}" 802-11-wireless-security.psk "${psk}"
     nmcli con up "${profile}" >/dev/null
     ok "PSK actualizado y reconectado"
 }
@@ -365,34 +364,6 @@ _cmd_vpn() {
 }
 
 # ---------------------------------------------------------------------------
-# canary <get|set> [ip]
-# ---------------------------------------------------------------------------
-_cmd_canary() {
-    local sub="${1:-}" ip="${2:-}"
-    _load safe
-
-    case "${sub}" in
-        set) require_root; safe_canary_set "${ip}" ;;
-        get|"") safe_canary_get ;;
-        *) _die "uso: wifi canary <get|set> [ip]" ;;
-    esac
-}
-
-# ---------------------------------------------------------------------------
-# safe <log|snapshots> -- historico de operaciones criticas.
-# ---------------------------------------------------------------------------
-_cmd_safe() {
-    local sub="${1:-}"
-    _load safe
-    case "${sub}" in
-        log)       safe_log ;;
-        snapshots) safe_snapshots_list ;;
-        status)    safe_canary_status ;;
-        *) _die "uso: wifi safe <log|snapshots|status>" ;;
-    esac
-}
-
-# ---------------------------------------------------------------------------
 # version / help
 # ---------------------------------------------------------------------------
 _cmd_version() {
@@ -456,19 +427,9 @@ VPN (Tailscale)
   sudo wifi vpn down             desconecta (daemon sigue)
   wifi vpn status                estado y peers
 
-SEGURIDAD REMOTA
-  wifi canary get                canary actual
-  sudo wifi canary set <ip>      define canary nuevo (default 100.103.104.19)
-  wifi safe log                  historico de operaciones criticas
-  wifi safe snapshots            snapshots disponibles
-  wifi safe status               watchdog activo?
-
 EMERGENCIA
   sudo wifi panic                reinicia NM, reconecta antenas
 
-Toda operacion critica (add, switch, radio, lan, passwd) corre dentro de
-safe_run: snapshot + canary + watchdog + rollback automatico si se pierde
-el acceso remoto. Timeout por accion, override con --timeout N.
 HELP
 }
 
@@ -495,8 +456,6 @@ case "${CMD}" in
     panic)           _cmd_panic ;;
     lan)             _cmd_lan "$@" ;;
     vpn)             _cmd_vpn "$@" ;;
-    canary)          _cmd_canary "$@" ;;
-    safe)            _cmd_safe "$@" ;;
     version|-v|--version) _cmd_version ;;
     help|-h|--help|"")    _cmd_help ;;
     *)

@@ -1,33 +1,271 @@
 #!/usr/bin/env bash
 # install.sh -- instalador wifi-setup (NetworkManager backbone).
 #
-# RESPONSABILIDAD UNICA: instalar el stack completo en un equipo Debian.
-# No configura el cable LAN (eso es wifi lan setup, activacion manual).
-# No conecta Tailscale (eso es wifi vpn up, activacion manual).
+# MODELO DE PRIVILEGIOS:
+#   El script corre como usuario normal. Solo la fase que muta el sistema
+#   (apt, systemctl, nmcli con add, /etc/, /usr/local/bin) se eleva con
+#   sudo, una sola vez, con: exec sudo bash $0 --root-phase ...
+#   Los nombres de ifaces viajan por argv; la PSK se pide DENTRO del sudo
+#   (asi el password de sudo y la PSK nunca comparten linea de comando).
 #
 # FLUJO:
-#   1. guarda Debian (Termux/macOS: exit limpio)
-#   2. relaunch en tmux:
-#        - dentro de tmux       -> ya estamos, seguir
-#        - hay servidor tmux    -> nueva ventana + select (ver en vivo)
-#        - no hay servidor      -> nueva sesion (attacha automaticamente)
-#      La ventana corre "install.sh 2>&1 | tee log" y se cierra al terminar.
-#      Todo el output queda en el log para revisar despues.
-#   3. auto-elevar via sudo (TTY presente gracias a la ventana tmux)
-#   4. deteccion: antenas WiFi, ssh iface
-#   5. install_deps (NM + iwd fallback + utilidades)
-#   6. pedir SSID/PSK si no hay perfiles previos
-#   7. crear perfiles NM en cada antena (SIN activar todavia)
-#   8. safe_run migrate-nm: parar iwd/dhcpcd, arrancar NM (canary 120s)
-#   9. verificar conectividad
-#  10. hardening SSH, install tailscale, symlink, state
+#   Fase usuario:
+#     1. guarda Debian
+#     2. si sudo + sin tmux -> bajar a SUDO_USER (relaunch en SU tmux)
+#     3. relaunch en tmux (crea ventana o sesion, attach)
+#     4. deteccion HW (antenas, ssh iface)
+#     5. exec sudo bash $0 --root-phase <ifaces>
+#   Fase root (dentro de sudo, mismo TTY, misma ventana tmux):
+#     6. install_deps (apt)
+#     7. prompt SSID/PSK, crear perfiles NM en cada antena
+#     8. migrar stack: parar iwd/dhcpcd, arrancar NM
+#     9. SSH hardening
+#    10. tailscale install (sin conectar)
+#    11. symlink /usr/local/bin/wifi
+#    12. state + verificacion
 #
-# Requiere: root, TTY, conexion a internet.
+# Requiere: Debian, TTY, conexion a internet.
 set -Eeuo pipefail
 IFS=$'\n\t'
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/lib/common.sh"
+
+# ---------------------------------------------------------------------------
+# Handler de la fase root: se dispara cuando el script se re-invoca con
+# --root-phase via sudo. Carga los libs que necesitan root y corre las
+# mutaciones del sistema. Los ifaces vienen por argv (no secretos).
+# ---------------------------------------------------------------------------
+if [[ "${1:-}" == "--root-phase" ]]; then
+    shift
+    _root_phase "$@"
+    exit $?
+fi
+
+# ---------------------------------------------------------------------------
+# _root_phase <primary> <secondary> <ssh_iface>
+# Corre como root (dentro de sudo). Instala, crea perfiles, migra el
+# stack, hardening SSH, tailscale, symlink, state.
+# ---------------------------------------------------------------------------
+_root_phase() {
+    [[ "${EUID}" -eq 0 ]] || die "_root_phase invocado sin root"
+
+    local WIFI_PRIMARY="${1:-}"
+    local WIFI_SECONDARY="${2:-}"
+    local SSH_IFACE="${3:-}"
+    [[ -n "${WIFI_PRIMARY}" ]] || die "root-phase sin iface primaria"
+
+    source "${SCRIPT_DIR}/lib/deps.sh"
+    source "${SCRIPT_DIR}/lib/nm.sh"
+    source "${SCRIPT_DIR}/lib/radio.sh"
+    source "${SCRIPT_DIR}/lib/vpn.sh"
+    source "${SCRIPT_DIR}/lib/ssh.sh"
+
+    local INSTALL_MODE="server"
+    local BIN_DIR="/usr/local/bin"
+    local WIFI_BIN="${BIN_DIR}/wifi"
+    local WIFI_REPO_BIN="${SCRIPT_DIR}/bin/wifi"
+
+    LOG_FILE="${WIFI_SETUP_LOG:-/var/log/wifi-setup-install-$(date +%Y%m%d-%H%M%S).log}"
+    mkdir -p "$(dirname "${LOG_FILE}")"
+
+    # ---------------------------------------------------------------------
+    # Limpieza previa (idempotente)
+    # ---------------------------------------------------------------------
+    if [[ -f "${STATE_DIR}/install.state" || -L "${WIFI_BIN}" ]]; then
+        info "instalacion previa detectada -- limpiando..."
+        sweep_legacy_install
+
+        for svc in wifi-setup-forward wifi-setup-client wifi-setup-lan; do
+            systemctl stop    "${svc}" 2>/dev/null || true
+            systemctl disable "${svc}" 2>/dev/null || true
+            rm -f "/etc/systemd/system/${svc}.service"
+        done
+        systemctl daemon-reload 2>/dev/null || true
+
+        for old_bin in wifi-panic wfs wifi-status wifi-list wifi-passwd wifi-showpass; do
+            rm -f "/usr/local/bin/${old_bin}"
+        done
+
+        while iptables -t nat -D POSTROUTING -j MASQUERADE 2>/dev/null; do :; done
+
+        rm -f /etc/systemd/network/10-wifi-setup-*.network
+        rm -f /etc/systemd/network/10-wifi-setup-*.link
+        rm -f /etc/ssh/sshd_config.d/99-wifi-setup.conf
+        rm -f /etc/sysctl.d/99-wifi-setup-forward.conf
+
+        info "limpieza completada"
+    fi
+
+    # ---------------------------------------------------------------------
+    # 1. Dependencias (apt)
+    # ---------------------------------------------------------------------
+    echo ""
+    section "Dependencias"
+    install_deps
+
+    # ---------------------------------------------------------------------
+    # 2. Perfiles WiFi ANTES de tocar el stack.
+    #    Con los perfiles creados, cuando migrate pare iwd, NM ya sabe con
+    #    que reconectar. Sin esta inversion, NM arranca sin red conocida y
+    #    el equipo queda sin WiFi hasta el siguiente boot.
+    # ---------------------------------------------------------------------
+    echo ""
+    section "Configuracion WiFi (perfiles)"
+
+    nm_require
+
+    local existing
+    existing="$(nmcli -t -f NAME,TYPE con show 2>/dev/null \
+        | awk -F: '$2=="802-11-wireless"{print $1}')"
+    if [[ -n "${existing}" ]]; then
+        info "perfiles WiFi existentes -- se conservan:"
+        while IFS= read -r p; do
+            [[ -n "${p}" ]] && info "  · ${p}"
+        done <<< "${existing}"
+    else
+        # Detectar SSID activo via iwd (que aun esta conectado).
+        local current_ssid=""
+        if command -v iwctl >/dev/null 2>&1; then
+            current_ssid="$(iwctl station "${WIFI_PRIMARY}" show 2>/dev/null \
+                | awk -F': ' '/Connected network/ {print $2}' | tr -d '[:space:]' || true)"
+        fi
+
+        local wifi_ssid="" wifi_psk=""
+        if [[ -n "${current_ssid}" ]]; then
+            info "SSID detectado desde iwd: ${current_ssid}"
+            read -r -p "SSID [${current_ssid}]: " wifi_ssid
+            wifi_ssid="${wifi_ssid:-${current_ssid}}"
+        else
+            read -r -p "SSID de la red WiFi: " wifi_ssid
+            [[ -n "${wifi_ssid}" ]] || die "SSID vacio"
+        fi
+
+        read -r -s -p "PSK (min 8): " wifi_psk; echo
+        [[ "${#wifi_psk}" -ge 8 ]] || die "PSK minimo 8 caracteres"
+
+        local ifc profile
+        for ifc in "${WIFI_PRIMARY}" ${WIFI_SECONDARY}; do
+            [[ -n "${ifc}" ]] || continue
+            profile="wifi-${ifc}-${wifi_ssid}"
+            nm_wifi_create "${profile}" "${ifc}" "${wifi_ssid}" "${wifi_psk}"
+            nm_con_set_autoconnect "${profile}" on
+        done
+        unset wifi_psk
+    fi
+
+    RADIO_PRIMARY="${WIFI_PRIMARY}"
+    RADIO_SECONDARY="${WIFI_SECONDARY}"
+    _radio_save_state
+    radio_sync_priorities
+
+    ok "perfiles WiFi listos -- NM tiene con que reconectar"
+
+    # ---------------------------------------------------------------------
+    # 3. Migracion al stack NM
+    # ---------------------------------------------------------------------
+    echo ""
+    section "Migrando stack de red"
+
+    info "parando iwd (queda instalado, disabled, fallback manual)..."
+    systemctl stop    iwd 2>/dev/null || true
+    systemctl disable iwd 2>/dev/null || true
+
+    info "parando dhcpcd (NM trae su propio cliente)..."
+    systemctl stop    dhcpcd 2>/dev/null || true
+    systemctl disable dhcpcd 2>/dev/null || true
+
+    info "parando systemd-networkd..."
+    systemctl stop    systemd-networkd 2>/dev/null || true
+    systemctl disable systemd-networkd 2>/dev/null || true
+
+    info "arrancando NetworkManager..."
+    systemctl enable NetworkManager >/dev/null 2>&1 || true
+    systemctl restart NetworkManager
+    sleep 5
+    systemctl is-active NetworkManager >/dev/null 2>&1 \
+        || die "NetworkManager no arranco -- revisa: journalctl -u NetworkManager -n 40"
+
+    local ifc
+    for ifc in "${WIFI_PRIMARY}" ${WIFI_SECONDARY}; do
+        [[ -n "${ifc}" ]] || continue
+        nmcli dev set "${ifc}" managed yes 2>/dev/null || true
+    done
+
+    info "esperando IP en ${WIFI_PRIMARY} (max 45s)..."
+    local waited=0 ip=""
+    while [[ "${waited}" -lt 45 ]]; do
+        ip="$(ip -4 -o addr show "${WIFI_PRIMARY}" 2>/dev/null \
+            | awk '{print $4}' | head -1)"
+        [[ -n "${ip}" ]] && break
+        sleep 3
+        waited=$((waited + 3))
+    done
+    [[ -n "${ip}" ]] \
+        || die "la antena ${WIFI_PRIMARY} no obtuvo IP tras 45s -- revisa: nmcli dev status"
+
+    ok "NetworkManager activo, ${WIFI_PRIMARY} con IP ${ip}"
+
+    # ---------------------------------------------------------------------
+    # 4. SSH hardening
+    # ---------------------------------------------------------------------
+    echo ""
+    section "SSH"
+    configure_ssh
+
+    # ---------------------------------------------------------------------
+    # 5. Tailscale (install + daemon, sin conectar)
+    # ---------------------------------------------------------------------
+    echo ""
+    section "VPN (Tailscale)"
+    vpn_install
+
+    # ---------------------------------------------------------------------
+    # 6. Symlink + state
+    # ---------------------------------------------------------------------
+    echo ""
+    section "Instalando comando"
+    chmod +x "${SCRIPT_DIR}/bin/wifi"
+    mkdir -p "${BIN_DIR}"
+    ln -sfn "${WIFI_REPO_BIN}" "${WIFI_BIN}"
+    ok "symlink: ${WIFI_BIN} -> ${WIFI_REPO_BIN}"
+
+    mkdir -p "${STATE_DIR}"
+    cat > "${STATE_DIR}/install.state" <<EOF
+INSTALL_MODE="${INSTALL_MODE}"
+WIFI_PRIMARY="${WIFI_PRIMARY}"
+WIFI_SECONDARY="${WIFI_SECONDARY}"
+SSH_IFACE="${SSH_IFACE}"
+EOF
+    chmod 600 "${STATE_DIR}/install.state"
+
+    if [[ -n "${SUDO_USER:-}" ]]; then
+        chown -R "${SUDO_USER}:${SUDO_USER}" "${BASE_DIR}" 2>/dev/null || true
+    fi
+
+    # ---------------------------------------------------------------------
+    # 7. Verificacion final
+    # ---------------------------------------------------------------------
+    echo ""
+    section "Verificacion"
+    nm_dev_list
+
+    echo ""
+    if ping -c1 -W2 1.1.1.1 >/dev/null 2>&1; then
+        ok "conectividad OK"
+    else
+        warn "sin conectividad -- revisa: wifi status"
+    fi
+
+    echo ""
+    vpn_print_help
+
+    echo ""
+    echo -e "${C_GREEN}${C_BOLD}  Instalacion completa.${C_RESET}"
+    echo -e "${C_GREEN}  Log    : ${LOG_FILE}${C_RESET}"
+    echo -e "${C_GREEN}  Comando: sudo wifi help${C_RESET}"
+    echo ""
+}
 
 # ---------------------------------------------------------------------------
 # --help
@@ -39,20 +277,16 @@ uso: sudo wifi install
 Instala wifi-setup. Auto-detecta antenas (nativa + USB), pregunta SSID y
 PSK solo si no existe config previa, y deja:
   - NetworkManager como gestor de red
-  - iwd instalado pero parado (fallback manual)
+  - iwd instalado y parado (fallback manual)
   - Las antenas con sus perfiles WiFi (PRIMARY=USB, SECONDARY=nativa)
   - Tailscale instalado y apagado
   - El cable LAN NO se configura: usa 'wifi lan setup' cuando lo necesites
 
-Requisitos:
-  - Debian 13+, root, conexion a internet
-  - Al menos una antena WiFi
-
-Supervivencia SSH: el install se relanza dentro de una ventana tmux.
-Si hay servidor tmux abierto, crea ventana nueva y te lleva a ella; si
-no, crea la sesion 'wifi-setup' y te attacha. La ventana se cierra sola
-al terminar; el output completo queda en
+El script corre como usuario y eleva con sudo solo la fase que muta el
+sistema. El output completo queda en
 ~/.local/state/wifi-setup/install-<timestamp>.log
+
+Requisitos: Debian 13+, TTY, conexion a internet, al menos una antena WiFi.
 HELP
     exit 0
 fi
@@ -78,25 +312,22 @@ fi
 
 # ---------------------------------------------------------------------------
 # 2. Si sudo elevo desde SUDO_USER y no estamos en tmux, bajar al usuario
-#    original ANTES del relaunch. El servidor tmux es por usuario: como
-#    root no veriamos la sesion del usuario, y el relaunch crearia una
-#    sesion nueva (invisible) en el server de root. Bajando a SUDO_USER,
-#    el relaunch ve SU sesion existente y crea la ventana ahi.
+#    original ANTES del relaunch. El server tmux es por usuario; como root
+#    no vemos la sesion del usuario.
 # ---------------------------------------------------------------------------
 if [[ "${EUID}" -eq 0 && -n "${SUDO_USER:-}" && -z "${TMUX:-}" ]]; then
     _real_user="${SUDO_USER}"
     _real_home="$(getent passwd "${_real_user}" | cut -d: -f6)"
-    [[ -n "${_real_home}" && -d "${_real_home}" ]] || \
-        die "no pude resolver el home de ${_real_user}"
+    [[ -n "${_real_home}" && -d "${_real_home}" ]] \
+        || die "no pude resolver el home de ${_real_user}"
     info "sudo: bajando a ${_real_user} para relaunch en SU tmux..."
     exec sudo -u "${_real_user}" HOME="${_real_home}" bash "$0" "$@"
 fi
 
 # ---------------------------------------------------------------------------
 # 3. Relaunch en tmux (solo si no estamos ya dentro).
-#    La ventana ejecuta: WIFI_SETUP_LOG=<log> bash $0 ... 2>&1 | tee -a $log; exit
-#    El "exit" al final hace que la ventana se cierre al terminar.
-#    El "tee" preserva el output visible Y lo guarda en el log.
+#    La ventana corre: WIFI_SETUP_LOG=<log> bash $0 ... 2>&1 | tee -a $log; exit
+#    El "exit" al final cierra la ventana al terminar.
 # ---------------------------------------------------------------------------
 _relaunch_in_tmux() {
     [[ -n "${TMUX:-}" ]] && return 0
@@ -134,75 +365,18 @@ _relaunch_in_tmux() {
 _relaunch_in_tmux "$@"
 
 # ---------------------------------------------------------------------------
-# 4. Auto-elevar via sudo (TTY presente: la ventana tmux o el terminal actual).
-#    sudo lee el password del TTY, nunca de stdin redirigido/argv/env.
+# A partir de aqui corremos como usuario (no root).
 # ---------------------------------------------------------------------------
-# Preservar WIFI_SETUP_LOG y HOME explícitamente. sudo -E depende de
-# env_keep en sudoers y no es confiable; pasar por línea de comando sí.
-# El path no lleva secretos (es un archivo de log en el home del
-# usuario), así que verlo en ps no es problema.
-_real_home="${HOME}"
-_log_from_parent="${WIFI_SETUP_LOG:-}"
-if [[ "${EUID}" -ne 0 ]]; then
-    if [[ -t 0 && -t 1 ]]; then
-        info "elevando a root via sudo..."
-        exec sudo WIFI_SETUP_LOG="${_log_from_parent}" HOME="${_real_home}" \
-            bash "$0" "$@"
-    fi
-    die "requiere root y TTY -- corre: nssh -t <alias> 'sudo bash $(realpath "$0")'"
+if [[ "${EUID}" -eq 0 ]]; then
+    die "install.sh debe correr como usuario, no como root -- usa: bash install.sh"
 fi
 
-# A partir de aca somos root. WIFI_SETUP_LOG viene de la línea de sudo.
-LOG_FILE="${WIFI_SETUP_LOG:-${_real_home}/.local/state/wifi-setup/install-$(date +%Y%m%d-%H%M%S).log}"
+LOG_FILE="${WIFI_SETUP_LOG:-${HOME}/.local/state/wifi-setup/install-$(date +%Y%m%d-%H%M%S).log}"
 mkdir -p "$(dirname "${LOG_FILE}")"
 
 # ---------------------------------------------------------------------------
-# Cargar el resto de modulos ahora que somos root
+# Deteccion HW (usuario, sin root).
 # ---------------------------------------------------------------------------
-source "${SCRIPT_DIR}/lib/deps.sh"
-source "${SCRIPT_DIR}/lib/detect.sh"
-source "${SCRIPT_DIR}/lib/nm.sh"
-source "${SCRIPT_DIR}/lib/radio.sh"
-source "${SCRIPT_DIR}/lib/vpn.sh"
-source "${SCRIPT_DIR}/lib/ssh.sh"
-
-INSTALL_MODE="server"   # conservado por compat, no afecta NM
-BIN_DIR="/usr/local/bin"
-WIFI_BIN="${BIN_DIR}/wifi"
-WIFI_REPO_BIN="${SCRIPT_DIR}/bin/wifi"
-
-# ---------------------------------------------------------------------------
-# Limpieza previa (idempotente)
-# ---------------------------------------------------------------------------
-if [[ -f "${STATE_DIR}/install.state" || -L "${WIFI_BIN}" ]]; then
-    info "instalacion previa detectada -- limpiando..."
-    sweep_legacy_install
-
-    for svc in wifi-setup-forward wifi-setup-client wifi-setup-lan; do
-        systemctl stop    "${svc}" 2>/dev/null || true
-        systemctl disable "${svc}" 2>/dev/null || true
-        rm -f "/etc/systemd/system/${svc}.service"
-    done
-    systemctl daemon-reload 2>/dev/null || true
-
-    for old_bin in wifi-panic wfs wifi-status wifi-list wifi-passwd wifi-showpass; do
-        rm -f "/usr/local/bin/${old_bin}"
-    done
-
-    while iptables -t nat -D POSTROUTING -j MASQUERADE 2>/dev/null; do :; done
-
-    rm -f /etc/systemd/network/10-wifi-setup-*.network
-    rm -f /etc/systemd/network/10-wifi-setup-*.link
-    rm -f /etc/ssh/sshd_config.d/99-wifi-setup.conf
-    rm -f /etc/sysctl.d/99-wifi-setup-forward.conf
-
-    info "limpieza completada"
-fi
-
-# ---------------------------------------------------------------------------
-# 5. Deteccion de hardware
-# ---------------------------------------------------------------------------
-echo ""
 section "Deteccion de hardware"
 
 SSH_IFACE="$(detect_ssh_iface 2>/dev/null || true)"
@@ -239,170 +413,14 @@ fi
 
 info "antena PRIMARY  : ${WIFI_PRIMARY}"
 info "antena SECONDARY: ${WIFI_SECONDARY:-—}"
+info "log: ${LOG_FILE}"
 
 # ---------------------------------------------------------------------------
-# 6. Dependencias
+# Elevar SOLO la fase que muta. Los ifaces viajan por argv (no son secretos).
+# La PSK se pide dentro de sudo, no aqui.
 # ---------------------------------------------------------------------------
-echo ""
-section "Dependencias"
-install_deps
+info "elevando a root para la fase de instalacion..."
+exec sudo WIFI_SETUP_LOG="${LOG_FILE}" \
+     bash "$0" --root-phase \
+     "${WIFI_PRIMARY}" "${WIFI_SECONDARY}" "${SSH_IFACE:-}"
 
-# ---------------------------------------------------------------------------
-# 7. Perfiles WiFi ANTES de tocar el stack.
-#    Al crear los perfiles primero, cuando migrate-nm pare iwd, NM ya tiene
-#    con que reconectar -- sin ventana ciega sin WiFi.
-# ---------------------------------------------------------------------------
-echo ""
-section "Configuracion WiFi (perfiles)"
-
-nm_require
-
-_existing_profiles="$(nmcli -t -f NAME,TYPE con show 2>/dev/null | awk -F: '$2=="802-11-wireless"{print $1}')"
-if [[ -n "${_existing_profiles}" ]]; then
-    info "perfiles WiFi existentes detectados -- se conservan:"
-    while IFS= read -r p; do
-        [[ -n "${p}" ]] && info "  · ${p}"
-    done <<< "${_existing_profiles}"
-else
-    # Detectar el SSID activo actual (iwd sabe cual esta conectado)
-    CURRENT_SSID=""
-    if command -v iwctl >/dev/null 2>&1; then
-        CURRENT_SSID="$(iwctl station "${WIFI_PRIMARY}" show 2>/dev/null \
-            | awk -F': ' '/Connected network/ {print $2}' | tr -d '[:space:]' || true)"
-    fi
-
-    if [[ -n "${CURRENT_SSID}" ]]; then
-        info "SSID detectado desde iwd: ${CURRENT_SSID}"
-        read -r -p "SSID [${CURRENT_SSID}]: " WIFI_SSID
-        WIFI_SSID="${WIFI_SSID:-${CURRENT_SSID}}"
-    else
-        read -r -p "SSID de la red WiFi: " WIFI_SSID
-        [[ -n "${WIFI_SSID}" ]] || die "SSID vacio"
-    fi
-
-    read -r -s -p "PSK (min 8): " WIFI_PSK; echo
-    [[ "${#WIFI_PSK}" -ge 8 ]] || die "PSK minimo 8 caracteres"
-
-    for _if in "${WIFI_IFACES[@]}"; do
-        _profile="wifi-${_if}-${WIFI_SSID}"
-        nm_wifi_create "${_profile}" "${_if}" "${WIFI_SSID}" "${WIFI_PSK}"
-        nm_con_set_autoconnect "${_profile}" on
-    done
-    unset WIFI_PSK
-fi
-
-# Persistir roles de antena
-RADIO_PRIMARY="${WIFI_PRIMARY}"
-RADIO_SECONDARY="${WIFI_SECONDARY}"
-_radio_save_state
-radio_sync_priorities
-
-ok "perfiles WiFi creados -- NM tiene con que reconectar"
-
-# ---------------------------------------------------------------------------
-# 8. Migracion al stack NM (safe_run: canary 120s + rollback automatico)
-# ---------------------------------------------------------------------------
-echo ""
-section "Migrando stack de red"
-
-_migrate_to_nm() {
-    info "deteniendo iwd (fallback manual) y dhcpcd (reemplazado por NM)..."
-    systemctl stop    iwd    2>/dev/null || true
-    systemctl disable iwd    2>/dev/null || true
-    systemctl stop    dhcpcd 2>/dev/null || true
-    systemctl disable dhcpcd 2>/dev/null || true
-    systemctl stop    systemd-networkd 2>/dev/null || true
-    systemctl disable systemd-networkd 2>/dev/null || true
-
-    info "arrancando NetworkManager..."
-    systemctl enable NetworkManager >/dev/null 2>&1 || true
-    systemctl restart NetworkManager
-    sleep 5
-    systemctl is-active NetworkManager >/dev/null 2>&1 \
-        || die "NetworkManager no arranco -- revisa: journalctl -u NetworkManager -n 40"
-
-    # NM necesita gestionar las antenas explicitamente.
-    nmcli dev set "${WIFI_PRIMARY}" managed yes 2>/dev/null || true
-    if [[ -n "${WIFI_SECONDARY}" ]]; then
-        nmcli dev set "${WIFI_SECONDARY}" managed yes 2>/dev/null || true
-    fi
-
-    # Esperar a que NM active los perfiles y obtenga IP.
-    info "esperando conexion WiFi (max 45s)..."
-    local waited=0 ip=""
-    while [[ "${waited}" -lt 45 ]]; do
-        ip="$(ip -4 -o addr show "${WIFI_PRIMARY}" 2>/dev/null | awk '{print $4}' | head -1)"
-        [[ -n "${ip}" ]] && break
-        sleep 3
-        waited=$((waited + 3))
-    done
-    [[ -n "${ip}" ]] \
-        || die "la antena ${WIFI_PRIMARY} no obtuvo IP tras 45s -- revisa: nmcli dev status"
-
-    ok "NetworkManager activo, ${WIFI_PRIMARY} con IP ${ip}"
-}
-
-if ! safe_run "migrate-nm" 120 _migrate_to_nm; then
-    die "migracion a NetworkManager fallo o el acceso se perdio -- revisa ${LOG_DIR}/ops.log"
-fi
-
-# ---------------------------------------------------------------------------
-# 9. SSH hardening
-# ---------------------------------------------------------------------------
-echo ""
-section "SSH"
-configure_ssh
-
-# ---------------------------------------------------------------------------
-# 10. Tailscale (install + daemon, sin conectar)
-# ---------------------------------------------------------------------------
-echo ""
-section "VPN (Tailscale)"
-vpn_install
-
-# ---------------------------------------------------------------------------
-# 11. Symlink + state final
-# ---------------------------------------------------------------------------
-echo ""
-section "Instalando comando"
-chmod +x "${SCRIPT_DIR}/bin/wifi"
-mkdir -p "${BIN_DIR}"
-ln -sfn "${WIFI_REPO_BIN}" "${WIFI_BIN}"
-ok "symlink: ${WIFI_BIN} -> ${WIFI_REPO_BIN}"
-
-cat > "${STATE_DIR}/install.state" <<EOF
-INSTALL_MODE="${INSTALL_MODE}"
-WIFI_PRIMARY="${WIFI_PRIMARY}"
-WIFI_SECONDARY="${WIFI_SECONDARY}"
-SSH_IFACE="${SSH_IFACE:-}"
-EOF
-chmod 600 "${STATE_DIR}/install.state"
-
-# BASE_DIR + logs accesibles para el usuario real (SUDO_USER).
-if [[ -n "${SUDO_USER:-}" ]]; then
-    chown -R "${SUDO_USER}:${SUDO_USER}" "${BASE_DIR}" 2>/dev/null || true
-fi
-[[ -f "${LOG_FILE}" ]] && chmod 644 "${LOG_FILE}" 2>/dev/null || true
-
-# ---------------------------------------------------------------------------
-# 12. Verificacion final
-# ---------------------------------------------------------------------------
-echo ""
-section "Verificacion"
-nm_dev_list
-
-echo ""
-if ping -c1 -W2 1.1.1.1 >/dev/null 2>&1; then
-    ok "conectividad OK"
-else
-    warn "sin conectividad -- revisa: wifi status"
-fi
-
-echo ""
-vpn_print_help
-
-echo ""
-echo -e "${C_GREEN}${C_BOLD}  Instalacion completa.${C_RESET}"
-echo -e "${C_GREEN}  Log    : ${LOG_FILE}${C_RESET}"
-echo -e "${C_GREEN}  Comando: sudo wifi help${C_RESET}"
-echo ""

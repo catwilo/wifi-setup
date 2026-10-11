@@ -36,8 +36,6 @@ fi
 # ---------------------------------------------------------------------------
 # shellcheck source=/dev/null
 source "$(dirname "${BASH_SOURCE[0]}")/log.sh"
-# shellcheck source=/dev/null
-source "$(dirname "${BASH_SOURCE[0]}")/safe.sh"
 
 # ---------------------------------------------------------------------------
 # die -- mensaje de error + exit 1.
