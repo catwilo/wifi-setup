@@ -179,7 +179,7 @@ networks_merge() {
     rm -f "${tmp_nm}"
 
     local count
-    count="$(grep -cv '^#' "${NETWORKS_STORE}" 2>/dev/null)"
+    count="$(grep -cv '^#' "${NETWORKS_STORE}" 2>/dev/null || true)"
     count="${count:-0}"
     ok "networks: store actualizado (${count} filas en ${NETWORKS_STORE})"
 }
@@ -252,7 +252,7 @@ networks_list() {
 
     local _nrows=0
     if [[ -f "${NETWORKS_STORE}" ]]; then
-        _nrows="$(grep -cv '^#' "${NETWORKS_STORE}" 2>/dev/null)"
+        _nrows="$(grep -cv '^#' "${NETWORKS_STORE}" 2>/dev/null || true)"
         _nrows="${_nrows:-0}"
     fi
     if [[ ! -f "${NETWORKS_STORE}" ]] || [[ "${_nrows}" -eq 0 ]]; then
