@@ -32,14 +32,46 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/lib/common.sh"
 
 # ---------------------------------------------------------------------------
-# Handler de la fase root: se dispara cuando el script se re-invoca con
-# --root-phase via sudo. Carga los libs que necesitan root y corre las
-# mutaciones del sistema. Los ifaces vienen por argv (no secretos).
+# --help
 # ---------------------------------------------------------------------------
-if [[ "${1:-}" == "--root-phase" ]]; then
-    shift
-    _root_phase "$@"
-    exit $?
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+    cat <<'HELP'
+uso: sudo wifi install
+
+Instala wifi-setup. Auto-detecta antenas (nativa + USB), pregunta SSID y
+PSK solo si no existe config previa, y deja:
+  - NetworkManager como gestor de red
+  - iwd instalado y parado (fallback manual)
+  - Las antenas con sus perfiles WiFi (PRIMARY=USB, SECONDARY=nativa)
+  - Tailscale instalado y apagado
+  - El cable LAN NO se configura: usa 'wifi lan setup' cuando lo necesites
+
+El script corre como usuario y eleva con sudo solo la fase que muta el
+sistema. El output completo queda en
+~/.local/state/wifi-setup/install-<timestamp>.log
+
+Requisitos: Debian 13+, TTY, conexion a internet, al menos una antena WiFi.
+HELP
+    exit 0
+fi
+
+# ---------------------------------------------------------------------------
+# 1. Guarda Debian: en otras plataformas salir limpio.
+# ---------------------------------------------------------------------------
+_require_debian() {
+    [[ -n "${PREFIX:-}" ]] && [[ -d "${PREFIX}/bin" ]] && return 1  # Termux
+    [[ -r /etc/os-release ]] || return 1
+    # shellcheck disable=SC1091
+    . /etc/os-release
+    case "${ID:-}${ID_LIKE:-}" in
+        *debian*|*ubuntu*) return 0 ;;
+    esac
+    return 1
+}
+
+if ! _require_debian; then
+    info "wifi-setup: plataforma no-Debian -- nada que hacer aqui (exit 0)"
+    exit 0
 fi
 
 # ---------------------------------------------------------------------------
@@ -268,46 +300,14 @@ EOF
 }
 
 # ---------------------------------------------------------------------------
-# --help
+# Handler de la fase root: se dispara cuando el script se re-invoca con
+# --root-phase via sudo. Carga los libs que necesitan root y corre las
+# mutaciones del sistema. Los ifaces vienen por argv (no secretos).
 # ---------------------------------------------------------------------------
-if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
-    cat <<'HELP'
-uso: sudo wifi install
-
-Instala wifi-setup. Auto-detecta antenas (nativa + USB), pregunta SSID y
-PSK solo si no existe config previa, y deja:
-  - NetworkManager como gestor de red
-  - iwd instalado y parado (fallback manual)
-  - Las antenas con sus perfiles WiFi (PRIMARY=USB, SECONDARY=nativa)
-  - Tailscale instalado y apagado
-  - El cable LAN NO se configura: usa 'wifi lan setup' cuando lo necesites
-
-El script corre como usuario y eleva con sudo solo la fase que muta el
-sistema. El output completo queda en
-~/.local/state/wifi-setup/install-<timestamp>.log
-
-Requisitos: Debian 13+, TTY, conexion a internet, al menos una antena WiFi.
-HELP
-    exit 0
-fi
-
-# ---------------------------------------------------------------------------
-# 1. Guarda Debian: en otras plataformas salir limpio.
-# ---------------------------------------------------------------------------
-_require_debian() {
-    [[ -n "${PREFIX:-}" ]] && [[ -d "${PREFIX}/bin" ]] && return 1  # Termux
-    [[ -r /etc/os-release ]] || return 1
-    # shellcheck disable=SC1091
-    . /etc/os-release
-    case "${ID:-}${ID_LIKE:-}" in
-        *debian*|*ubuntu*) return 0 ;;
-    esac
-    return 1
-}
-
-if ! _require_debian; then
-    info "wifi-setup: plataforma no-Debian -- nada que hacer aqui (exit 0)"
-    exit 0
+if [[ "${1:-}" == "--root-phase" ]]; then
+    shift
+    _root_phase "$@"
+    exit $?
 fi
 
 # ---------------------------------------------------------------------------
@@ -325,9 +325,30 @@ if [[ "${EUID}" -eq 0 && -n "${SUDO_USER:-}" && -z "${TMUX:-}" ]]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 3. Relaunch en tmux (solo si no estamos ya dentro).
-#    La ventana corre: WIFI_SETUP_LOG=<log> bash $0 ... 2>&1 | tee -a $log; exit
-#    El "exit" al final cierra la ventana al terminar.
+# 3. Preparar el directorio de logs en el HOME del usuario.
+#    Si existe con dueno root (instalacion previa que corrio todo como
+#    root), borrarlo con sudo una vez. sudo cachea el timestamp 15 min;
+#    el resto del script no vuelve a pedir password hasta --root-phase.
+# ---------------------------------------------------------------------------
+if [[ "${EUID}" -eq 0 ]]; then
+    die "install.sh debe correr como usuario, no como root -- usa: bash install.sh"
+fi
+
+LOG_DIR_USER="${HOME}/.local/state/wifi-setup"
+if [[ -e "${LOG_DIR_USER}" && ! -w "${LOG_DIR_USER}" ]]; then
+    warn "${LOG_DIR_USER} no es escribible (instalacion previa como root) -- limpiando con sudo..."
+    sudo rm -rf "${LOG_DIR_USER}" \
+        || die "no pude limpiar ${LOG_DIR_USER} -- borra a mano: sudo rm -rf ${LOG_DIR_USER}"
+fi
+mkdir -p "${LOG_DIR_USER}"
+
+# ---------------------------------------------------------------------------
+# 4. Relaunch en tmux.
+#    - Ya dentro de tmux: seguir aqui.
+#    - Hay servidor tmux: crear ventana 'wifi-install' y saltar a ella.
+#    - No hay servidor: crear sesion 'wifi-setup' (attacha si hay TTY).
+#    La ventana corre: bash $0 2>&1 | tee -a $log; exit
+#    El 'exit' la cierra al terminar. El 'tee' deja todo en el log.
 # ---------------------------------------------------------------------------
 _relaunch_in_tmux() {
     [[ -n "${TMUX:-}" ]] && return 0
@@ -337,9 +358,7 @@ _relaunch_in_tmux() {
     }
 
     local ts; ts="$(date +%Y%m%d-%H%M%S)"
-    local log_dir="${HOME}/.local/state/wifi-setup"
-    local log="${log_dir}/install-${ts}.log"
-    mkdir -p "${log_dir}"
+    local log="${LOG_DIR_USER}/install-${ts}.log"
 
     local inner
     inner="WIFI_SETUP_LOG=$(printf '%q' "${log}") bash $(printf '%q' "$0")"
@@ -354,25 +373,24 @@ _relaunch_in_tmux() {
         tmux new-window -t "${first_session}" -n wifi-install "${inner}"
         tmux select-window -t "${first_session}:wifi-install"
         info "log: ${log}"
-    else
-        info "creando sesion tmux 'wifi-setup' (te attacha automaticamente)..."
-        info "log: ${log}"
-        exec tmux new-session -s wifi-setup -n install "${inner}"
+        exit 0
     fi
-    exit 0
+
+    # No hay servidor tmux. Si no hay TTY externo no podemos attachar;
+    # crear una sesion detached dejaria un proceso huerfano invisible.
+    if [[ ! -t 0 && ! -t 1 ]]; then
+        die "no hay sesion tmux y no hay TTY -- conectate con: nssh -t <alias>
+y vuelve a correr: bash install.sh"
+    fi
+
+    info "creando sesion tmux 'wifi-setup' (te attacha automaticamente)..."
+    info "log: ${log}"
+    exec tmux new-session -s wifi-setup -n install "${inner}"
 }
 
 _relaunch_in_tmux "$@"
 
-# ---------------------------------------------------------------------------
-# A partir de aqui corremos como usuario (no root).
-# ---------------------------------------------------------------------------
-if [[ "${EUID}" -eq 0 ]]; then
-    die "install.sh debe correr como usuario, no como root -- usa: bash install.sh"
-fi
-
-LOG_FILE="${WIFI_SETUP_LOG:-${HOME}/.local/state/wifi-setup/install-$(date +%Y%m%d-%H%M%S).log}"
-mkdir -p "$(dirname "${LOG_FILE}")"
+LOG_FILE="${WIFI_SETUP_LOG:-${LOG_DIR_USER}/install-$(date +%Y%m%d-%H%M%S).log}"
 
 # ---------------------------------------------------------------------------
 # Deteccion HW (usuario, sin root).
@@ -423,4 +441,3 @@ info "elevando a root para la fase de instalacion..."
 exec sudo WIFI_SETUP_LOG="${LOG_FILE}" \
      bash "$0" --root-phase \
      "${WIFI_PRIMARY}" "${WIFI_SECONDARY}" "${SSH_IFACE:-}"
-
