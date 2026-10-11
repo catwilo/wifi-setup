@@ -339,6 +339,23 @@ _cmd_panic() {
 }
 
 # ---------------------------------------------------------------------------
+# doctor [--fix]
+# Diagnostico del stack. Sin flags, solo reporta. Con --fix, corrige
+# los problemas conocidos de forma segura (no destructivo).
+# ---------------------------------------------------------------------------
+_cmd_doctor() {
+    _load nm radio doctor
+
+    # Sin --fix es solo lectura: no requiere root. Con --fix necesita
+    # root porque escribe .link, renombra perfiles NM y toca systemd.
+    if [[ "${1:-}" == "--fix" ]]; then
+        require_root
+    fi
+
+    doctor_run "$@"
+}
+
+# ---------------------------------------------------------------------------
 # lan <setup|up|down|status|remove>
 # ---------------------------------------------------------------------------
 _cmd_lan() {
@@ -479,6 +496,10 @@ VPN (Tailscale)
   sudo wifi vpn down             desconecta (daemon sigue)
   wifi vpn status                estado y peers
 
+DIAGNOSTICO
+  sudo wifi doctor              reporte del estado del stack (read-only)
+  sudo wifi doctor --fix        aplica los fixes seguros automaticamente
+
 EMERGENCIA
   sudo wifi panic                reinicia NM, reconecta antenas
 
@@ -506,6 +527,7 @@ case "${CMD}" in
     showmac)         _cmd_showmac "$@" ;;
     autoconnect)     _cmd_autoconnect "$@" ;;
     panic)           _cmd_panic ;;
+    doctor)          _cmd_doctor "$@" ;;
     lan)             _cmd_lan "$@" ;;
     usb-names)       _cmd_usb_names "$@" ;;
     vpn)             _cmd_vpn "$@" ;;
