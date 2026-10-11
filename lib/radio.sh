@@ -211,8 +211,10 @@ radio_use() {
     #   3. Solo entonces apagar la vieja.
     # Si la nueva no llega a conectar, no se toca la vieja.
 
+    local -a _up_args=("${iface}")
+    [[ "${persist}" -eq 1 ]] && _up_args+=(--persist)
     info "encendiendo ${iface} (sin tocar las demas)..."
-    radio_up "${iface}" ${persist:+--persist}
+    radio_up "${_up_args[@]}"
 
     info "esperando IP en ${iface} (max 45s)..."
     local waited=0 ip=""
@@ -236,8 +238,10 @@ radio_use() {
         [[ -n "${other}" ]] || continue
         [[ "${other}" == "${iface}" ]] && continue
         # No apagar si todavia no esta conectada la nueva.
+        local -a _down_args=("${other}")
+        [[ "${persist}" -eq 1 ]] && _down_args+=(--persist)
         info "apagando ${other}..."
-        radio_down "${other}" ${persist:+--persist}
+        radio_down "${_down_args[@]}"
     done < <(radio_ifaces)
 
     if [[ "${persist}" -eq 1 ]]; then
