@@ -128,10 +128,14 @@ safe_rollback() {
         && cp -a "${dir}/resolv.conf" /etc/resolv.conf 2>/dev/null || true
 
     if [[ -f "${dir}/services.txt" ]]; then
-        local svc line active
+        local svc line active enabled
         while IFS= read -r line; do
             svc="${line%% *}"
             active="$(printf '%s\n' "${line}" | grep -oE 'active=[^ ]+' || true)"
+            enabled="$(printf '%s\n' "${line}" | grep -oE 'enabled=[^ ]+' || true)"
+            if [[ "${enabled}" == "enabled=enabled" ]]; then
+                systemctl enable "${svc}" 2>/dev/null || true
+            fi
             if [[ "${active}" == "active=active" ]]; then
                 systemctl start "${svc}" 2>/dev/null || true
             fi

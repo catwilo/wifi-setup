@@ -95,6 +95,9 @@ _relaunch_in_tmux() {
 
 _relaunch_in_tmux "$@"
 
+# Directorios base necesarios antes de cualquier operacion con snapshot.
+require_dirs
+
 # ---------------------------------------------------------------------------
 # 2. Limpieza previa (idempotente)
 # ---------------------------------------------------------------------------
@@ -179,22 +182,38 @@ install_deps
 # ---------------------------------------------------------------------------
 echo ""
 section "Migrando stack de red"
-info "deteniendo iwd (fallback manual) y dhcpcd (reemplazado por NM)..."
-systemctl stop    iwd    2>/dev/null || true
-systemctl disable iwd    2>/dev/null || true
-systemctl stop    dhcpcd 2>/dev/null || true
-systemctl disable dhcpcd 2>/dev/null || true
-systemctl stop    systemd-networkd 2>/dev/null || true
-systemctl disable systemd-networkd 2>/dev/null || true
 
-info "arrancando NetworkManager..."
-systemctl enable NetworkManager >/dev/null 2>&1 || true
-systemctl restart NetworkManager
-sleep 3
-systemctl is-active NetworkManager >/dev/null 2>&1 \
-    || die "NetworkManager no arranco -- revisa: journalctl -u NetworkManager -n 40"
+# _migrate_to_nm: para iwd/dhcpcd/networkd, arranca NM. Se corre
+# dentro de safe_run: snapshot + canary a tx1 + rollback automatico
+# si el canary pierde contacto (NM mal -> sin WiFi -> sin Tailscale).
+_migrate_to_nm() {
+    info "deteniendo iwd (fallback manual) y dhcpcd (reemplazado por NM)..."
+    systemctl stop    iwd    2>/dev/null || true
+    systemctl disable iwd    2>/dev/null || true
+    systemctl stop    dhcpcd 2>/dev/null || true
+    systemctl disable dhcpcd 2>/dev/null || true
+    systemctl stop    systemd-networkd 2>/dev/null || true
+    systemctl disable systemd-networkd 2>/dev/null || true
 
-ok "NetworkManager activo"
+    info "arrancando NetworkManager..."
+    systemctl enable NetworkManager >/dev/null 2>&1 || true
+    systemctl restart NetworkManager
+    sleep 3
+    systemctl is-active NetworkManager >/dev/null 2>&1 \
+        || die "NetworkManager no arranco -- revisa: journalctl -u NetworkManager -n 40"
+
+    # NM necesita ver las antenas para gestionarlas.
+    nmcli dev set "${WIFI_PRIMARY}" managed yes 2>/dev/null || true
+    if [[ -n "${WIFI_SECONDARY}" ]]; then
+        nmcli dev set "${WIFI_SECONDARY}" managed yes 2>/dev/null || true
+    fi
+
+    ok "NetworkManager activo"
+}
+
+if ! safe_run "migrate-nm" 120 _migrate_to_nm; then
+    die "migracion a NetworkManager fallo o el acceso se perdio -- revisa ${LOG_DIR}/ops.log"
+fi
 
 # ---------------------------------------------------------------------------
 # 6. Credenciales WiFi + perfiles
@@ -263,7 +282,6 @@ vpn_install
 # ---------------------------------------------------------------------------
 echo ""
 section "Instalando comando"
-require_dirs
 chmod +x "${SCRIPT_DIR}/bin/wifi"
 mkdir -p "${BIN_DIR}"
 ln -sfn "${WIFI_REPO_BIN}" "${WIFI_BIN}"
