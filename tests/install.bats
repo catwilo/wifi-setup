@@ -93,11 +93,6 @@ setup() { setup_env; }
     [ "$status" -eq 0 ]
 }
 
-@test "install.sh: ventana imprime RESULTADO OK o FALLO al terminar" {
-    run grep -q 'RESULTADO: OK' "$INSTALL"; [ "$status" -eq 0 ]
-    run grep -q 'RESULTADO: FALLO' "$INSTALL"; [ "$status" -eq 0 ]
-}
-
 # --- ausencia de residuos del diseno viejo ---
 
 @test "install.sh: sin safe_run ni canary ni /opt/wifi-setup" {

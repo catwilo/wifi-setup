@@ -266,20 +266,19 @@ nm_usb_names_apply() {
 
     local line mac name link desired applied=0 skipped=0
     while IFS= read -r line; do
-        # Strip comment + leading/trailing whitespace
+        # Strip comment, trim, y colapsar espacios internos a uno.
         line="${line%%#*}"
-        line="$(printf '%s' "${line}" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+        line="$(printf '%s' "${line}" | tr -s '[:space:]' ' ' | sed 's/^ //; s/ $//')"
         [[ -n "${line}" ]] || continue
 
-        # Expect exactly two fields: mac name
-        # shellcheck disable=SC2086
-        set -- ${line}
-        if [[ "$#" -ne 2 ]]; then
+        # Split en exactamente dos campos. IFS explicito a espacio porque
+        # el script llama con IFS=$'\n\t' global, que no dividiria.
+        local _rest
+        IFS=' ' read -r mac name _rest <<< "${line}"
+        if [[ -z "${mac}" || -z "${name}" || -n "${_rest}" ]]; then
             warn "usb-names.conf: linea ignorada (formato esperado '<mac> <name>'): ${line}"
             continue
         fi
-        mac="$1"
-        name="$2"
 
         mac="${mac,,}"
         if ! _nm_usb_valid_mac "${mac}"; then
@@ -332,11 +331,9 @@ nm_usb_names_status() {
         line="${line%%#*}"
         line="$(printf '%s' "${line}" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
         [[ -n "${line}" ]] || continue
-        # shellcheck disable=SC2086
-        set -- ${line}
-        [[ "$#" -eq 2 ]] || continue
-        mac="$1"
-        name="$2"
+        local _rest
+        IFS=' ' read -r mac name _rest <<< "${line}"
+        [[ -n "${mac}" && -n "${name}" && -z "${_rest}" ]] || continue
         link="${NM_USB_LINK_DIR}/${NM_USB_LINK_PREFIX}${name}.link"
         if [[ -f "${link}" ]]; then
             echo "  ${mac} -> ${name} [${link} OK]"

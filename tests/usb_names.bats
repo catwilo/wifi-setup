@@ -126,6 +126,29 @@ EOF
     [[ "$output" == *"OK"* ]]
 }
 
+
+@test "nm_usb_names_apply: funciona con IFS=\$'\\\\n\\\\t' (como install.sh)" {
+    # install.sh tiene IFS=$'\n\t' global. El parser debe dividir por
+    # espacio igual, no depender del IFS externo. Regresion del bug
+    # "linea ignorada" que se veia en db1.
+    local cfg="$BATS_TEST_TMPDIR/usb-names.conf"
+    printf '90:de:80:e7:fd:9f wlx1\n' > "$cfg"
+
+    (
+        IFS=$'\n\t'
+        # shellcheck source=/dev/null
+        source "$REPO/lib/nm.sh" 2>/dev/null || true
+        nm_usb_names_apply "$cfg"
+    )
+
+    local link="$NM_USB_LINK_DIR/10-wifi-setup-wlx1.link"
+    [ -f "$link" ] || {
+        echo "el .link no se creo con IFS=\$'\\n\\t'" >&3
+        return 1
+    }
+    grep -q "^Name=wlx1$" "$link"
+}
+
 @test "config/usb-names.conf del repo: formato valido (<mac> <nombre>)" {
     local line mac name
     while IFS= read -r line; do

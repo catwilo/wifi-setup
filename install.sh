@@ -103,13 +103,13 @@ _root_phase() {
         _idem_nm="inactivo"
         _idem_ok=0
     fi
-    if systemctl is-enabled iwd 2>/dev/null | grep -q '^disabled$'; then
+    if [[ "$(systemctl is-enabled iwd 2>/dev/null || true)" == "disabled" ]]; then
         _idem_iwd="disabled"
     else
         _idem_iwd="no disabled"
         _idem_ok=0
     fi
-    if systemctl is-enabled dhcpcd 2>/dev/null | grep -q '^disabled$'; then
+    if [[ "$(systemctl is-enabled dhcpcd 2>/dev/null || true)" == "disabled" ]]; then
         _idem_dhcpcd="disabled"
     else
         _idem_dhcpcd="no disabled"
@@ -141,8 +141,6 @@ _root_phase() {
     fi
 
 
-    LOG_FILE="${WIFI_SETUP_LOG:-/var/log/wifi-setup-install-$(date +%Y%m%d-%H%M%S).log}"
-    mkdir -p "$(dirname "${LOG_FILE}")"
 
     # ---------------------------------------------------------------------
     # Limpieza previa (idempotente)
@@ -562,29 +560,13 @@ _relaunch_in_tmux() {
     local inner
     inner="WIFI_SETUP_INWIN=1 WIFI_SETUP_LOG=$(printf '%q' "${log}") bash $(printf '%q' "$0")"
     local a; for a in "$@"; do inner+=" $(printf '%q' "${a}")"; done
-    # Cola de la ventana: esperar ENTER antes de cerrar para que el usuario
-    # alcance a leer el resultado. El heredoc con quote literal hace que
-    # ${rc} y ${WIFI_SETUP_LOG} se expandan EN LA VENTANA, no ahora.
+    # Cola: pausar para que el usuario lea el resultado del install.
+    # El install ya imprime su propio resumen final (verificacion con
+    # PASS/FAIL + "Instalacion completa/termino con N fallo(s)" + Log).
+    # Aqui solo esperamos ENTER, para que la ventana no se cierre sola.
     local trailer
-    trailer="$(cat <<'TRAILER'
-rc=${PIPESTATUS[0]}
-echo
-echo "=========================================="
-if [ "${rc}" -eq 0 ]; then
-    echo "  RESULTADO: OK -- instalacion completa"
-else
-    echo "  RESULTADO: FALLO (rc=${rc})"
-    echo "  Revisa el log para el detalle."
-fi
-echo "  Log: ${WIFI_SETUP_LOG}"
-echo "=========================================="
-echo
-echo "ENTER para cerrar esta ventana..."
-read -r _wifi_setup_wait
-exit ${rc}
-TRAILER
-)"
-    inner+=" 2>&1 | tee -a $(printf '%q' "${log}"); ${trailer}"
+    trailer="; echo; echo 'ENTER para cerrar esta ventana...'; read -r _wifi_setup_wait"
+    inner+=" 2>&1 | tee -a $(printf '%q' "${log}")${trailer}"
 
     # Sesion destino:
     #   dentro de tmux  -> la sesion actual
