@@ -120,11 +120,6 @@ _cmd_ifaces() {
     section "Antenas WiFi (kernel + NM)"
     radio_ifaces_list || true
 
-    section "Adaptadores sin driver cargado"
-    if ! radio_ifaces_missing; then
-        echo "  (ninguno -- todos los adaptadores detectados tienen driver)"
-    fi
-
     echo ""
 }
 

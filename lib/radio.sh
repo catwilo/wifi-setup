@@ -388,20 +388,3 @@ radio_ifaces_list() {
     fi
 }
 
-# radio_ifaces_missing -- detecta adaptadores USB que existen en el bus
-# pero cuyo driver no se cargo (no hay iface de red).
-radio_ifaces_missing() {
-    local found=0
-    if command -v lsusb >/dev/null 2>&1; then
-        # Adaptadores WiFi conocidos por VID:PID (base minima + patron)
-        # Buscar cualquiera que se identifique como Wireless
-        local line
-        while IFS= read -r line; do
-            [[ -n "${line}" ]] || continue
-            found=1
-            echo "posible adaptador sin driver: ${line}"
-        done < <(lsusb 2>/dev/null | grep -iE "wireless|wifi|802\.11|aic|rtl88|mt76|ath9k|r8188|rtw")
-    fi
-    [[ "${found}" -eq 0 ]] && return 1
-    return 0
-}
