@@ -210,49 +210,76 @@ _doctor_check_profiles() {
 }
 
 # _doctor_try_fix_orphan <profile> <missing_iface>
-# Intenta mapear la iface missing a una existente por MAC, y renombra
-# el perfil. Requiere que exista un .link con PermanentMACAddress.
+# Migra un perfil huerfano: extrae SSID+PSK del perfil viejo, crea uno
+# nuevo apuntando a la iface valida (wlx1 por MAC match), y borra el
+# viejo. Deja el nuevo con autoconnect=off (la USB por defecto esta
+# apagada; el usuario la activa con subcomando).
+#
+# Requiere DOCTOR_FIX_MODE=1. Sin --fix, solo reporta.
 _doctor_try_fix_orphan() {
     local profile="$1" missing_iface="$2"
 
-    if [[ "${DOCTOR_FIX_MODE}" -ne 1 ]]; then
+    [[ "${DOCTOR_FIX_MODE}" -eq 1 ]] || return 0
+
+    # Cual es la iface nueva? Buscamos en config/usb-names.conf una
+    # mapping cuyo nombre ya exista como iface actual.
+    local cfg="${CONFIG_DIR}/usb-names.conf"
+    [[ -f "${cfg}" ]] || cfg="${LIB_DIR}/../config/usb-names.conf"
+    [[ -f "${cfg}" ]] || return 0
+
+    local new_iface=""
+    local _line _mac _name _rest
+    local -a _lines=()
+    mapfile -t _lines < "${cfg}"
+    for _line in "${_lines[@]}"; do
+        _line="${_line%%#*}"
+        _line="$(printf '%s' "${_line}" | tr -s '[:space:]' ' ' | sed 's/^ //; s/ $//')"
+        [[ -n "${_line}" ]] || continue
+        IFS=' ' read -r _mac _name _rest <<< "${_line}"
+        [[ -n "${_mac}" && -n "${_name}" && -z "${_rest}" ]] || continue
+        if ip link show "${_name}" >/dev/null 2>&1; then
+            new_iface="${_name}"
+            break
+        fi
+    done
+    [[ -n "${new_iface}" ]] || return 0
+
+    # Extraer SSID y PSK del perfil viejo (PSK requiere --show-secrets).
+    local ssid psk new_profile
+    ssid="$(nmcli -t -g 802-11-wireless.ssid con show "${profile}" 2>/dev/null || true)"
+    [[ -n "${ssid}" ]] || {
+        # No se puede recrear: borrar huerfano y avisar.
+        nmcli con delete "${profile}" >/dev/null 2>&1 || true
+        _doctor_fix "${profile}: sin SSID legible, eliminado"
+        return 0
+    }
+
+    psk="$(nmcli -s -t -g 802-11-wireless-security.psk con show "${profile}" 2>/dev/null || true)"
+
+    new_profile="wifi-${new_iface}-${ssid}"
+    if nmcli -t -f NAME con show 2>/dev/null | grep -qxF "${new_profile}"; then
+        # Ya existe un perfil valido con el nombre nuevo; solo borrar viejo.
+        nmcli con delete "${profile}" >/dev/null 2>&1 || true
+        _doctor_fix "${profile}: duplicado obsoleto, eliminado (ya existe ${new_profile})"
         return 0
     fi
 
-    # Buscar el nombre nuevo que reemplazo a missing_iface. Fuentes:
-    #   1. config/usb-names.conf (mapeo MAC -> name)
-    #   2. .link en /etc/systemd/network/
-    # Como missing_iface ya no existe, no podemos sacar su MAC directo.
-    # Buscamos entre los .link un mapping donde el viejo no este, o
-    # simplemente probamos wlx1 si el config lo declara.
+    if [[ -n "${psk}" ]]; then
+        nm_wifi_create "${new_profile}" "${new_iface}" "${ssid}" "${psk}" >/dev/null 2>&1 || true
+    else
+        nmcli con add type wifi con-name "${new_profile}" ifname "${new_iface}" ssid "${ssid}" >/dev/null 2>&1 || true
+    fi
 
-    local cfg="${CONFIG_DIR}/usb-names.conf"
-    [[ -f "${cfg}" ]] || return 0
-
-    local line mac name
-    while IFS= read -r line; do
-        line="${line%%#*}"
-        line="$(printf '%s' "${line}" | tr -s '[:space:]' ' ' | sed 's/^ //; s/ $//')"
-        [[ -n "${line}" ]] || continue
-        local _rest
-        IFS=' ' read -r mac name _rest <<< "${line}"
-        [[ -n "${mac}" && -n "${name}" && -z "${_rest}" ]] || continue
-        # ¿La nueva iface existe?
-        if ip link show "${name}" >/dev/null 2>&1; then
-            # Verificar si el perfil apunta a una iface que ya no existe
-            # y la MAC del .link coincide. Reescritura segura.
-            local new_profile="${profile/${missing_iface}/${name}}"
-            if [[ "${new_profile}" != "${profile}" ]]; then
-                nmcli con mod "${profile}" connection.id            "${new_profile}"          >/dev/null 2>&1 || true
-                nmcli con mod "${new_profile}" connection.interface-name "${name}"          >/dev/null 2>&1 || true
-                _doctor_fix "${profile} -> ${new_profile} (interface-name=${name})"
-            else
-                nmcli con mod "${profile}" connection.interface-name "${name}"              >/dev/null 2>&1 || true
-                _doctor_fix "${profile}: interface-name=${name}"
-            fi
-            return 0
-        fi
-    done < "${cfg}"
+    if nmcli -t -f NAME con show 2>/dev/null | grep -qxF "${new_profile}"; then
+        # La USB queda apagada por defecto: autoconnect off.
+        nm_con_set_autoconnect "${new_profile}" off >/dev/null 2>&1 || true
+        nmcli con delete "${profile}" >/dev/null 2>&1 || true
+        _doctor_fix "${profile} -> ${new_profile} (iface=${new_iface}, autoconnect=off)"
+    else
+        # No se pudo crear el nuevo. Solo borrar el huerfano.
+        nmcli con delete "${profile}" >/dev/null 2>&1 || true
+        _doctor_fix "${profile}: huerfano eliminado (no se pudo recrear)"
+    fi
 }
 
 # ---------------------------------------------------------------------------

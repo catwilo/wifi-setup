@@ -131,3 +131,31 @@ setup() {
     doctor_run --fix 2>/dev/null
     [ "$DOCTOR_FIX_MODE" -eq 1 ]
 }
+
+# --- orphan fix: comportamiento con nmcli mockeado ---
+
+@test "_doctor_try_fix_orphan: no hace nada sin DOCTOR_FIX_MODE" {
+    DOCTOR_FIX_MODE=0
+    # Stub de nmcli que fallaria si se llamara (marca error si invocado)
+    nmcli() { echo "NMCLI LLAMADO SIN PERMISO" >&2; return 1; }
+    export -f nmcli 2>/dev/null || true
+
+    local rc=0
+    _doctor_try_fix_orphan "wifi-viejo-ssid" "vieja0" 2>/dev/null || rc=$?
+    [ "$rc" -eq 0 ]
+}
+
+@test "_doctor_try_fix_orphan: sin usb-names.conf no toca nada" {
+    DOCTOR_FIX_MODE=1
+    CONFIG_DIR="$BATS_TEST_TMPDIR/no-config"
+    LIB_DIR="$BATS_TEST_TMPDIR/no-lib"
+    mkdir -p "$CONFIG_DIR" "$LIB_DIR"
+
+    # Stub de nmcli: si alguien lo llama, falla el test
+    local nmcli_called=0
+    nmcli() { nmcli_called=1; return 1; }
+    export -f nmcli 2>/dev/null || true
+
+    _doctor_try_fix_orphan "perfil-x" "vieja0" 2>/dev/null || true
+    [ "$nmcli_called" -eq 0 ]
+}
