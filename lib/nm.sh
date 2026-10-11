@@ -220,7 +220,7 @@ nm_summary() {
 #
 # Idempotente: si el .link existe con el mismo contenido, no lo reescribe.
 
-NM_USB_LINK_DIR="/etc/systemd/network"
+NM_USB_LINK_DIR="${NM_USB_LINK_DIR:-/etc/systemd/network}"
 NM_USB_LINK_PREFIX="10-wifi-setup-"
 
 # _nm_usb_valid_mac <mac> -- 0 si es MAC valida en formato aa:bb:cc:dd:ee:ff
