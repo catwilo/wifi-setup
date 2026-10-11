@@ -77,7 +77,23 @@ if ! _require_debian; then
 fi
 
 # ---------------------------------------------------------------------------
-# 2. Relaunch en tmux (solo si no estamos ya dentro).
+# 2. Si sudo elevo desde SUDO_USER y no estamos en tmux, bajar al usuario
+#    original ANTES del relaunch. El servidor tmux es por usuario: como
+#    root no veriamos la sesion del usuario, y el relaunch crearia una
+#    sesion nueva (invisible) en el server de root. Bajando a SUDO_USER,
+#    el relaunch ve SU sesion existente y crea la ventana ahi.
+# ---------------------------------------------------------------------------
+if [[ "${EUID}" -eq 0 && -n "${SUDO_USER:-}" && -z "${TMUX:-}" ]]; then
+    _real_user="${SUDO_USER}"
+    _real_home="$(getent passwd "${_real_user}" | cut -d: -f6)"
+    [[ -n "${_real_home}" && -d "${_real_home}" ]] || \
+        die "no pude resolver el home de ${_real_user}"
+    info "sudo: bajando a ${_real_user} para relaunch en SU tmux..."
+    exec sudo -u "${_real_user}" HOME="${_real_home}" bash "$0" "$@"
+fi
+
+# ---------------------------------------------------------------------------
+# 3. Relaunch en tmux (solo si no estamos ya dentro).
 #    La ventana ejecuta: WIFI_SETUP_LOG=<log> bash $0 ... 2>&1 | tee -a $log; exit
 #    El "exit" al final hace que la ventana se cierre al terminar.
 #    El "tee" preserva el output visible Y lo guarda en el log.
@@ -118,7 +134,7 @@ _relaunch_in_tmux() {
 _relaunch_in_tmux "$@"
 
 # ---------------------------------------------------------------------------
-# 3. Auto-elevar via sudo (TTY presente: la ventana tmux o el terminal actual).
+# 4. Auto-elevar via sudo (TTY presente: la ventana tmux o el terminal actual).
 #    sudo lee el password del TTY, nunca de stdin redirigido/argv/env.
 # ---------------------------------------------------------------------------
 # Preservar WIFI_SETUP_LOG y HOME explícitamente. sudo -E depende de
@@ -184,7 +200,7 @@ if [[ -f "${STATE_DIR}/install.state" || -L "${WIFI_BIN}" ]]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 4. Deteccion de hardware
+# 5. Deteccion de hardware
 # ---------------------------------------------------------------------------
 echo ""
 section "Deteccion de hardware"
@@ -225,14 +241,14 @@ info "antena PRIMARY  : ${WIFI_PRIMARY}"
 info "antena SECONDARY: ${WIFI_SECONDARY:-—}"
 
 # ---------------------------------------------------------------------------
-# 5. Dependencias
+# 6. Dependencias
 # ---------------------------------------------------------------------------
 echo ""
 section "Dependencias"
 install_deps
 
 # ---------------------------------------------------------------------------
-# 6. Perfiles WiFi ANTES de tocar el stack.
+# 7. Perfiles WiFi ANTES de tocar el stack.
 #    Al crear los perfiles primero, cuando migrate-nm pare iwd, NM ya tiene
 #    con que reconectar -- sin ventana ciega sin WiFi.
 # ---------------------------------------------------------------------------
@@ -284,7 +300,7 @@ radio_sync_priorities
 ok "perfiles WiFi creados -- NM tiene con que reconectar"
 
 # ---------------------------------------------------------------------------
-# 7. Migracion al stack NM (safe_run: canary 120s + rollback automatico)
+# 8. Migracion al stack NM (safe_run: canary 120s + rollback automatico)
 # ---------------------------------------------------------------------------
 echo ""
 section "Migrando stack de red"
@@ -331,21 +347,21 @@ if ! safe_run "migrate-nm" 120 _migrate_to_nm; then
 fi
 
 # ---------------------------------------------------------------------------
-# 8. SSH hardening
+# 9. SSH hardening
 # ---------------------------------------------------------------------------
 echo ""
 section "SSH"
 configure_ssh
 
 # ---------------------------------------------------------------------------
-# 9. Tailscale (install + daemon, sin conectar)
+# 10. Tailscale (install + daemon, sin conectar)
 # ---------------------------------------------------------------------------
 echo ""
 section "VPN (Tailscale)"
 vpn_install
 
 # ---------------------------------------------------------------------------
-# 10. Symlink + state final
+# 11. Symlink + state final
 # ---------------------------------------------------------------------------
 echo ""
 section "Instalando comando"
@@ -369,7 +385,7 @@ fi
 [[ -f "${LOG_FILE}" ]] && chmod 644 "${LOG_FILE}" 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
-# 11. Verificacion final
+# 12. Verificacion final
 # ---------------------------------------------------------------------------
 echo ""
 section "Verificacion"
