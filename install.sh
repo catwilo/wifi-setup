@@ -55,24 +55,6 @@ HELP
     exit 0
 fi
 
-# ---------------------------------------------------------------------------
-# 1. Guarda Debian: en otras plataformas salir limpio.
-# ---------------------------------------------------------------------------
-_require_debian() {
-    [[ -n "${PREFIX:-}" ]] && [[ -d "${PREFIX}/bin" ]] && return 1  # Termux
-    [[ -r /etc/os-release ]] || return 1
-    # shellcheck disable=SC1091
-    . /etc/os-release
-    case "${ID:-}${ID_LIKE:-}" in
-        *debian*|*ubuntu*) return 0 ;;
-    esac
-    return 1
-}
-
-if ! _require_debian; then
-    info "wifi-setup: plataforma no-Debian -- nada que hacer aqui (exit 0)"
-    exit 0
-fi
 
 # ---------------------------------------------------------------------------
 # _root_phase <primary> <secondary> <ssh_iface>
@@ -497,6 +479,25 @@ if [[ "${1:-}" == "--root-phase" ]]; then
 fi
 
 # ---------------------------------------------------------------------------
+# 1. Guarda Debian: en otras plataformas salir limpio.
+# ---------------------------------------------------------------------------
+_require_debian() {
+    [[ -n "${PREFIX:-}" ]] && [[ -d "${PREFIX}/bin" ]] && return 1  # Termux
+    [[ -r /etc/os-release ]] || return 1
+    # shellcheck disable=SC1091
+    . /etc/os-release
+    case "${ID:-}${ID_LIKE:-}" in
+        *debian*|*ubuntu*) return 0 ;;
+    esac
+    return 1
+}
+
+if ! _require_debian; then
+    info "wifi-setup: plataforma no-Debian -- nada que hacer aqui (exit 0)"
+    exit 0
+fi
+
+# ---------------------------------------------------------------------------
 # 2. Si sudo elevo desde SUDO_USER y no estamos en tmux, bajar al usuario
 #    original ANTES del relaunch. El server tmux es por usuario; como root
 #    no vemos la sesion del usuario.
@@ -575,6 +576,15 @@ y vuelve a correr: bash install.sh"
 }
 
 _relaunch_in_tmux "$@"
+
+
+
+
+
+
+
+
+
 
 LOG_FILE="${WIFI_SETUP_LOG:-${LOG_DIR_USER}/install-$(date +%Y%m%d-%H%M%S).log}"
 
