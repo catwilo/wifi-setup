@@ -60,7 +60,17 @@ if ! _require_debian; then
     exit 0
 fi
 
-require_root
+# Auto-elevacion: si no somos root y hay TTY (via nssh -t), re-exec
+# con sudo. sudo lee el password del TTY -- nunca de stdin redirigido,
+# argv ni variables de entorno. Sin TTY, falla claro sin intentar
+# (evita prompts colgados en contextos no interactivos).
+if [[ "${EUID}" -ne 0 ]]; then
+    if [[ -t 0 && -t 1 ]]; then
+        info "elevando a root via sudo..."
+        exec sudo bash "$0" "$@"
+    fi
+    die "requiere root y TTY -- corre: nssh -t <alias> 'sudo bash $(realpath "$0")'"
+fi
 
 echo ""
 echo -e "${C_BOLD}${C_RED}  wifi-setup uninstaller${C_RESET}"

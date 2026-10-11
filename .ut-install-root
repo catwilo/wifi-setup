@@ -1,0 +1,3 @@
+# Marcador para ut: este repo requiere root en install/uninstall/check.
+# ut distribute --install debe correr install.sh con TTY remoto (-t)
+# para que sudo pida el password del TTY, no por stdin.
