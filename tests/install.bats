@@ -119,3 +119,23 @@ setup() { setup_env; }
         }
     done
 }
+
+# --- regresiones: bugs ya arreglados que deben no volver ---
+
+@test "install.sh: LOG_FILE se declara en _root_phase (WIFI_SETUP_LOG propagado)" {
+    # WIFI_SETUP_LOG viaja a sudo por linea de comando; _root_phase debe
+    # asignarlo a LOG_FILE o el banner final falla con unbound.
+    local ln_fn ln_log
+    ln_fn="$(grep -n '^_root_phase()' "$INSTALL" | head -1 | cut -d: -f1)"
+    ln_log="$(grep -n 'LOG_FILE="\${WIFI_SETUP_LOG' "$INSTALL" | head -1 | cut -d: -f1)"
+    [ -n "$ln_fn" ] && [ -n "$ln_log" ]
+    [ "$ln_log" -gt "$ln_fn" ]
+}
+
+@test "install.sh: checks de is-enabled NO usan pipe con grep (rompe con pipefail)" {
+    # Bug: "systemctl is-enabled X | grep -q disabled" devuelve rc=1
+    # porque is-enabled sale 1 cuando esta disabled + pipefail. El check
+    # debe usar string-compare directo.
+    ! grep -qE "is-enabled [a-z]+ 2>/dev/null \| grep" "$INSTALL"
+    grep -qE 'is-enabled [a-z]+ 2>/dev/null \|\| true' "$INSTALL"
+}

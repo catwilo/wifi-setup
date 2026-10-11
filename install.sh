@@ -91,6 +91,10 @@ _root_phase() {
     local WIFI_BIN="${BIN_DIR}/wifi"
     local WIFI_REPO_BIN="${SCRIPT_DIR}/bin/wifi"
 
+    # LOG_FILE viene de la fase usuario por WIFI_SETUP_LOG (pasado a sudo
+    # por linea de comando). Fallback por si se invoca --root-phase a mano.
+    LOG_FILE="${WIFI_SETUP_LOG:-/var/log/wifi-setup-install-$(date +%Y%m%d-%H%M%S).log}"
+
     # ---------------------------------------------------------------------
     # Pre-check de idempotencia: si TODO esta ya aplicado, no re-ejecutar.
     # ---------------------------------------------------------------------
@@ -375,14 +379,14 @@ EOF
     fi
 
     # iwd disabled (fallback manual)
-    if systemctl is-enabled iwd 2>/dev/null | grep -q '^disabled$'; then
+    if [[ "$(systemctl is-enabled iwd 2>/dev/null || true)" == "disabled" ]]; then
         _chk "iwd disabled (fallback)" 1
     else
         _chk "iwd disabled (fallback)" 0
     fi
 
     # dhcpcd disabled
-    if systemctl is-enabled dhcpcd 2>/dev/null | grep -q '^disabled$'; then
+    if [[ "$(systemctl is-enabled dhcpcd 2>/dev/null || true)" == "disabled" ]]; then
         _chk "dhcpcd disabled" 1
     else
         _chk "dhcpcd disabled" 0
