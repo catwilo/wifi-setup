@@ -179,7 +179,8 @@ networks_merge() {
     rm -f "${tmp_nm}"
 
     local count
-    count="$(grep -cv '^#' "${NETWORKS_STORE}" 2>/dev/null || echo 0)"
+    count="$(grep -cv '^#' "${NETWORKS_STORE}" 2>/dev/null)"
+    count="${count:-0}"
     ok "networks: store actualizado (${count} filas en ${NETWORKS_STORE})"
 }
 
@@ -249,7 +250,12 @@ networks_sync() {
 networks_list() {
     _networks_store_init
 
-    if [[ ! -f "${NETWORKS_STORE}" ]] || [[ "$(grep -cv '^#' "${NETWORKS_STORE}" 2>/dev/null || echo 0)" -eq 0 ]]; then
+    local _nrows=0
+    if [[ -f "${NETWORKS_STORE}" ]]; then
+        _nrows="$(grep -cv '^#' "${NETWORKS_STORE}" 2>/dev/null)"
+        _nrows="${_nrows:-0}"
+    fi
+    if [[ ! -f "${NETWORKS_STORE}" ]] || [[ "${_nrows}" -eq 0 ]]; then
         echo "(store vacio -- corre: wifi networks merge)"
         return 0
     fi
