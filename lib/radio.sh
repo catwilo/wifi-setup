@@ -205,16 +205,40 @@ radio_use() {
     [[ -n "${iface}" ]] || die "uso: wifi radio use <iface> [--persist]"
     radio_is_iface "${iface}" || die "'${iface}' no es una interfaz WiFi"
 
+    # Orden correcto para no cortar el acceso remoto:
+    #   1. Encender la nueva.
+    #   2. Esperar a que tenga IP (hasta 45s).
+    #   3. Solo entonces apagar la vieja.
+    # Si la nueva no llega a conectar, no se toca la vieja.
+
+    info "encendiendo ${iface} (sin tocar las demas)..."
+    radio_up "${iface}" ${persist:+--persist}
+
+    info "esperando IP en ${iface} (max 45s)..."
+    local waited=0 ip=""
+    while [[ "${waited}" -lt 45 ]]; do
+        ip="$(ip -4 -o addr show "${iface}" 2>/dev/null \
+            | awk '{print $4}' | head -1)"
+        [[ -n "${ip}" ]] && break
+        sleep 3
+        waited=$((waited + 3))
+    done
+    if [[ -z "${ip}" ]]; then
+        warn "${iface} no obtuvo IP tras 45s -- no se apaga ninguna otra antena"
+        warn "revisa: wifi doctor"
+        return 1
+    fi
+    ok "${iface} con IP ${ip}"
+
+    # Ahora apagar la vieja (o las viejas).
     local other
     while IFS= read -r other; do
         [[ -n "${other}" ]] || continue
         [[ "${other}" == "${iface}" ]] && continue
+        # No apagar si todavia no esta conectada la nueva.
         info "apagando ${other}..."
         radio_down "${other}" ${persist:+--persist}
     done < <(radio_ifaces)
-
-    info "encendiendo ${iface}..."
-    radio_up "${iface}" ${persist:+--persist}
 
     if [[ "${persist}" -eq 1 ]]; then
         mkdir -p "${STATE_DIR}"
