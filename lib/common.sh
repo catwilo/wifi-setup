@@ -24,11 +24,16 @@ CONFIG_DIR="${BASE_DIR}/config"
 # ---------------------------------------------------------------------------
 # Colores ANSI (solo si stdout es terminal)
 # ---------------------------------------------------------------------------
+# Colores ANSI como bytes reales (ANSI-C quoting) para que printf '%s'
+# los emita sin necesidad de -e. Los modulos que usan echo -e siguen
+# funcionando: el ESC embebido se imprime tal cual.
 if [[ -t 1 ]]; then
-    C_RED='\033[0;31m'; C_GREEN='\033[0;32m'; C_YELLOW='\033[1;33m'
-    C_CYAN='\033[0;36m'; C_BOLD='\033[1m'; C_RESET='\033[0m'
+    C_RED=$'\033[0;31m'; C_GREEN=$'\033[0;32m'; C_YELLOW=$'\033[1;33m'
+    C_CYAN=$'\033[0;36m'; C_BOLD=$'\033[1m'; C_RESET=$'\033[0m'
+    C_DIM=$'\033[2m'
 else
     C_RED=''; C_GREEN=''; C_YELLOW=''; C_CYAN=''; C_BOLD=''; C_RESET=''
+    C_DIM=''
 fi
 
 # ---------------------------------------------------------------------------
