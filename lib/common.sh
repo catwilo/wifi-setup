@@ -6,7 +6,7 @@
 #   - set -Eeuo pipefail + umask 077
 #   - directorios BASE/LOG/STATE/CONFIG
 #   - colores ANSI
-#   - source de log.sh + safe.sh
+#   - source de log.sh
 #   - helpers: die, require_root, require_dirs, validate_interface
 #   - sweep_legacy_install (instalaciones previas del esquema viejo)
 #

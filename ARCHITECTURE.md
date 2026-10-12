@@ -113,40 +113,6 @@ NO conecta Tailscale (eso es `wifi vpn up`).
 Cada subcomando acepta -h/--help. El dispatcher entrega el control a
 lib/help.sh antes de tocar el lib de negocio.
 
-## Seguridad remota (safe_run) -- DISENADO, NO IMPLEMENTADO
-
-La version previa de este documento describia una capa `safe_run` con
-snapshot + canary + watchdog + rollback automatico, y el help de
-`bin/wifi` listaba timeouts ("watchdog 60s", "watchdog 45s"). Ese
-codigo NO existe en el repo:
-
-- `lib/safe.sh` no existe.
-- `grep -rn safe_run lib/ bin/wifi` no devuelve coincidencias.
-- `wifi radio up|down`, `wifi lan up|down` y `wifi panic` llaman
-  `nm_con_up`/`nm_con_down` directo, sin wrapper.
-
-Estado real hoy: las operaciones de antena y LAN NO tienen rollback
-automatico. Si cortan el acceso remoto, la sesion SSH se pierde y hay
-que recuperar por consola fisica o por otra antena previamente activa.
-
-Diseno original (para reimplementar):
-
-    1. Snapshot: guarda perfiles NM, wpa_supplicant, rutas, servicios.
-    2. Canary: watchdog en background pinguea <canary> cada 2s.
-    3. Aplicar: corre el comando.
-    4. Esperar <timeout> segundos.
-    5. Si el canary falla 3 veces seguidas: rollback automatico.
-    6. Si sobrevive <timeout>: exito, canary se detiene.
-
-Configuracion prevista:
-    - canary default: nodo externo (tx1).
-    - timeout: por operacion (radio up=60, radio down=45, lan up=75, etc.).
-    - logs: BASE_DIR/logs/ops.log
-    - snapshots: BASE_DIR/state/snapshots/
-
-Trabajo pendiente: implementar lib/safe.sh y enrutar por el las
-operaciones criticas. Mientras no exista, no prometerlo en la ayuda ni
-en este documento.
 
 ## Persistencia
 
@@ -167,13 +133,6 @@ multiples interfaces, perfiles por red con prioridad, DHCP por iface, MAC
 clonada, NAT (`ipv4.method shared`), IP estatica (`ipv4.method manual`).
 iwd queda instalado, parado, disabled -- fallback manual si NM falla.
 
-### Por que timeout por operacion (cuando safe_run exista)
-
-Subir una antena puede tardar 5s; subir una LAN con NAT + DHCP +
-verificacion puede tardar 60s. Un timeout unico seria o muy corto
-(rollback innecesario) o muy largo (esperas largas cuando hay fallo
-real). Cada comando define su default apropiado, siempre override con
-`--timeout N`. Aplica solo al diseno de safe_run.
 
 ### Por que installer NO activa el cable LAN
 

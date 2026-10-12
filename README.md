@@ -156,13 +156,3 @@ Cada subcomando acepta `-h`/`--help` para su ayuda detallada:
 Ver `docs/architecture-map.md` para el mapa de modulos y las decisiones
 de diseno.
 
-## Estado conocido
-
-- `lib/safe.sh` (snapshot + canary + watchdog + rollback automatico en
-  operaciones criticas) fue disenado pero NO implementado. La seccion
-  "Seguridad remota" que aparecia en la documentacion previa describia
-  ese diseno; el codigo actual no lo aplica. Las operaciones de
-  `radio up|down`, `lan up|down` y `panic` no tienen rollback
-  automatico: si cortan el acceso remoto, la sesion se pierde.
-  Reimplementar `lib/safe.sh` y enrutar esas operaciones por el queda
-  como trabajo pendiente.

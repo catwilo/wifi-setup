@@ -149,7 +149,7 @@ lan_setup() {
 }
 
 # ---------------------------------------------------------------------------
-# lan_up -- activa el perfil LAN con watchdog de acceso remoto.
+# lan_up -- activa el perfil LAN.
 # ---------------------------------------------------------------------------
 lan_up() {
     nm_require
