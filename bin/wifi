@@ -57,15 +57,50 @@ _load() {
 }
 
 # ---------------------------------------------------------------------------
+# _load_help -- sourcea common.sh + help.sh (solo cuando se pide ayuda).
+# ---------------------------------------------------------------------------
+_load_help() {
+    # shellcheck source=/dev/null
+    source "${LIB_DIR}/common.sh"
+    # shellcheck source=/dev/null
+    source "${LIB_DIR}/help.sh"
+}
+
+# ---------------------------------------------------------------------------
+# _maybe_help <topic> [args...] -- si el primer arg es -h/--help, imprime
+# la ayuda del topic y sale 0. El topic normaliza '-' a '_' para que
+# "usb-names" resuelva a "help_usb_names".
+# ---------------------------------------------------------------------------
+_maybe_help() {
+    local topic="${1//-/_}"; shift
+    if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+        _load_help
+        if declare -F "help_${topic}" >/dev/null 2>&1; then
+            "help_${topic}"
+        else
+            printf 'error: no hay ayuda para "%s"\n' "${topic}" >&2
+            exit 1
+        fi
+        exit 0
+    fi
+}
+
+# ---------------------------------------------------------------------------
 # install / uninstall / check -- entrypoints separados.
 # ---------------------------------------------------------------------------
 _cmd_install() {
+    _maybe_help install "$@"
+
     exec bash "${SCRIPTS_DIR}/install.sh" "$@"
 }
 _cmd_uninstall() {
+    _maybe_help uninstall "$@"
+
     exec bash "${SCRIPTS_DIR}/uninstall.sh" "$@"
 }
 _cmd_check() {
+    _maybe_help check "$@"
+
     exec bash "${SCRIPTS_DIR}/checks.sh" "$@"
 }
 
@@ -73,6 +108,8 @@ _cmd_check() {
 # status
 # ---------------------------------------------------------------------------
 _cmd_status() {
+    _maybe_help status "$@"
+
     _load nm radio
     require_root
 
@@ -114,6 +151,8 @@ _cmd_status() {
 # presentes en el bus que no cargaron driver.
 # ---------------------------------------------------------------------------
 _cmd_ifaces() {
+    _maybe_help ifaces "$@"
+
     _load nm radio
     # Solo lectura: no requiere root.
 
@@ -127,6 +166,8 @@ _cmd_ifaces() {
 # radio <list|primary|secondary|use|clear-session|up|down>
 # ---------------------------------------------------------------------------
 _cmd_radio() {
+    _maybe_help radio "$@"
+
     local sub="${1:-}"
     shift || true
     [[ -n "${sub}" ]] || _die "uso: wifi radio <list|primary|secondary|use|clear-session|up|down> [args]"
@@ -150,6 +191,8 @@ _cmd_radio() {
 # add <ssid> [--iface X] [--pass P] -- crear perfil WiFi.
 # ---------------------------------------------------------------------------
 _cmd_add() {
+    _maybe_help add "$@"
+
     _load nm radio
     require_root
 
@@ -202,6 +245,8 @@ _cmd_add() {
 #   sync   regenera perfiles NM desde el store (idempotente)
 # ---------------------------------------------------------------------------
 _cmd_networks() {
+    _maybe_help networks "$@"
+
     local sub="${1:-list}"
     shift || true
 
@@ -220,6 +265,8 @@ _cmd_networks() {
 # switch <ssid> [--iface X] -- cambiar a un perfil WiFi guardado.
 # ---------------------------------------------------------------------------
 _cmd_switch() {
+    _maybe_help switch "$@"
+
     _load nm radio
     require_root
 
@@ -242,6 +289,8 @@ _cmd_switch() {
 # passwd <profile> -- cambiar PSK de un perfil.
 # ---------------------------------------------------------------------------
 _cmd_passwd() {
+    _maybe_help passwd "$@"
+
     _load nm
     require_root
 
@@ -263,6 +312,8 @@ _cmd_passwd() {
 # showpass <profile> -- PSK en claro del perfil.
 # ---------------------------------------------------------------------------
 _cmd_showpass() {
+    _maybe_help showpass "$@"
+
     _load nm
     require_root
 
@@ -285,6 +336,8 @@ _cmd_showpass() {
 # setmac <profile> <mac|random|stable|permanent>
 # ---------------------------------------------------------------------------
 _cmd_setmac() {
+    _maybe_help setmac "$@"
+
     _load nm
     require_root
 
@@ -305,6 +358,8 @@ _cmd_setmac() {
 # showmac <profile>
 # ---------------------------------------------------------------------------
 _cmd_showmac() {
+    _maybe_help showmac "$@"
+
     _load nm
     require_root
 
@@ -325,6 +380,8 @@ _cmd_showmac() {
 # autoconnect <profile> <on|off>
 # ---------------------------------------------------------------------------
 _cmd_autoconnect() {
+    _maybe_help autoconnect "$@"
+
     _load nm
     require_root
 
@@ -339,6 +396,8 @@ _cmd_autoconnect() {
 # panic -- recuperacion de emergencia.
 # ---------------------------------------------------------------------------
 _cmd_panic() {
+    _maybe_help panic "$@"
+
     _load nm
     require_root
 
@@ -362,6 +421,8 @@ _cmd_panic() {
 # Cambia una antena entre managed y monitor, sin tocar las demas.
 # ---------------------------------------------------------------------------
 _cmd_monitor() {
+    _maybe_help monitor "$@"
+
     local sub="${1:-}"
     shift || true
 
@@ -382,6 +443,8 @@ _cmd_monitor() {
 # los problemas conocidos de forma segura (no destructivo).
 # ---------------------------------------------------------------------------
 _cmd_doctor() {
+    _maybe_help doctor "$@"
+
     _load nm radio doctor
 
     # Sin --fix es solo lectura: no requiere root. Con --fix necesita
@@ -397,6 +460,8 @@ _cmd_doctor() {
 # lan <setup|up|down|status|remove>
 # ---------------------------------------------------------------------------
 _cmd_lan() {
+    _maybe_help lan "$@"
+
     local sub="${1:-}"
     shift || true
 
@@ -420,6 +485,8 @@ _cmd_lan() {
 # Fuente: config/usb-names.conf en BASE_DIR (si install corrio) o en el repo.
 # ---------------------------------------------------------------------------
 _cmd_usb_names() {
+    _maybe_help usb_names "$@"
+
     local sub="${1:-}"
     shift || true
 
@@ -451,6 +518,8 @@ _cmd_usb_names() {
 # vpn <install|up|down|status>
 # ---------------------------------------------------------------------------
 _cmd_vpn() {
+    _maybe_help vpn "$@"
+
     local sub="${1:-}"
     shift || true
 
@@ -466,6 +535,16 @@ _cmd_vpn() {
 }
 
 # ---------------------------------------------------------------------------
+# scan [--iface X] -- escaneo de redes WiFi visibles.
+# ---------------------------------------------------------------------------
+_cmd_scan() {
+    _maybe_help scan "$@"
+    _load nm radio scan
+    require_root
+    scan_run "$@"
+}
+
+# ---------------------------------------------------------------------------
 # version / help
 # ---------------------------------------------------------------------------
 _cmd_version() {
@@ -473,83 +552,8 @@ _cmd_version() {
 }
 
 _cmd_help() {
-    cat <<'HELP'
-wifi-setup 2.0 -- WiFi + LAN + VPN sobre NetworkManager
-
-USO
-  sudo wifi <subcomando> [args]
-
-INSTALACION
-  sudo wifi install              instala NM, conecta antenas, crea perfiles
-  sudo wifi uninstall            desinstala (iwd queda instalado, parado)
-  sudo wifi check                verifica estado post-install
-
-ESTADO
-  wifi status                    NM, antenas, conexiones, LAN, VPN, internet
-
-ANTENAS (nativa + USB)
-  wifi ifaces                    inventario fisico (kernel + NM + huérfanos)
-  wifi radio list                tabla: iface, tipo, estado, conexion, rol
-  sudo wifi radio primary <i>    persistente: i pasa a PRIMARY
-  sudo wifi radio secondary <i>  persistente: i pasa a SECONDARY
-  sudo wifi radio use <i>        solo esta sesion (no persiste)
-  sudo wifi radio clear-session  olvida override de sesion
-  sudo wifi radio up <i>         activa (watchdog 60s)
-  sudo wifi radio up <i> --persist   activa + autoconnect on
-  sudo wifi radio down <i>       desactiva (watchdog 45s)
-  sudo wifi radio down <i> --persist desactiva + autoconnect off
-
-REDES WiFi
-  sudo wifi add <ssid>           crea perfil (interactivo PSK)
-  sudo wifi add <ssid> --iface X --pass P
-  wifi networks                  tabla unificada del store de redes
-  sudo wifi networks merge       funde perfiles NM actuales al store
-  sudo wifi networks sync        regenera perfiles NM desde el store
-  sudo wifi switch <ssid> [iface]   cambia al perfil
-  sudo wifi passwd <profile>     cambia PSK
-  sudo wifi showpass <profile>   muestra PSK
-  sudo wifi autoconnect <profile> <on|off>
-
-MAC
-  sudo wifi setmac <profile> <mac|random|stable|permanent>
-  wifi showmac <profile>
-
-USB NAMING (MAC -> nombre de iface USB WiFi)
-  wifi usb-names                ver mappings y estado de .link
-  sudo wifi usb-names apply     aplicar mappings (proximo boot)
-  sudo wifi usb-names edit      editar config/usb-names.conf
-
-LAN (cable ethernet, activacion manual)
-  sudo wifi lan setup server --ip 1.2.3.2/24
-  sudo wifi lan setup client --ip 1.2.3.1/24 --gw 1.2.3.2
-  sudo wifi lan setup router
-  sudo wifi lan setup auto
-  sudo wifi lan up               activa (watchdog 75s)
-  sudo wifi lan down             desactiva (watchdog 45s)
-  wifi lan status                estado actual
-  sudo wifi lan remove           borra perfil
-
-VPN (Tailscale)
-  sudo wifi vpn install          instala + daemon (sin conectar)
-  sudo wifi vpn up               conecta
-  sudo wifi vpn up --routes 1.2.3.0/24
-  sudo wifi vpn up --advertise-exit-node
-  sudo wifi vpn down             desconecta (daemon sigue)
-  wifi vpn status                estado y peers
-
-MODO MONITOR (una antena en monitor, la otra sigue conectada)
-  sudo wifi monitor on <iface>  poner iface en monitor
-  sudo wifi monitor off <iface> devolver iface a managed (NM reconecta)
-  wifi monitor status           que ifaces estan en cada modo
-
-DIAGNOSTICO
-  sudo wifi doctor              reporte del estado del stack (read-only)
-  sudo wifi doctor --fix        aplica los fixes seguros automaticamente
-
-EMERGENCIA
-  sudo wifi panic                reinicia NM, reconecta antenas
-
-HELP
+    _load_help
+    help_index
 }
 
 # ---------------------------------------------------------------------------
@@ -562,9 +566,10 @@ case "${CMD}" in
     install)         _cmd_install "$@" ;;
     uninstall|remove) _cmd_uninstall "$@" ;;
     check|verify)    _cmd_check "$@" ;;
-    status)          _cmd_status ;;
-    ifaces)          _cmd_ifaces ;;
+    status)          _cmd_status "$@" ;;
+    ifaces)          _cmd_ifaces "$@" ;;
     radio)           _cmd_radio "$@" ;;
+    scan)            _cmd_scan "$@" ;;
     add)             _cmd_add "$@" ;;
     networks)        _cmd_networks "$@" ;;
     switch)          _cmd_switch "$@" ;;
@@ -573,14 +578,14 @@ case "${CMD}" in
     setmac)          _cmd_setmac "$@" ;;
     showmac)         _cmd_showmac "$@" ;;
     autoconnect)     _cmd_autoconnect "$@" ;;
-    panic)           _cmd_panic ;;
+    panic)           _cmd_panic "$@" ;;
     monitor)         _cmd_monitor "$@" ;;
     doctor)          _cmd_doctor "$@" ;;
     lan)             _cmd_lan "$@" ;;
     usb-names)       _cmd_usb_names "$@" ;;
     vpn)             _cmd_vpn "$@" ;;
-    version|-v|--version) _cmd_version ;;
-    help|-h|--help|"")    _cmd_help ;;
+    version|-v|--version) _cmd_version "$@" ;;
+    help|-h|--help|"")    _cmd_help "$@" ;;
     *)
         echo "comando desconocido: '${CMD}'" >&2
         echo "usa: wifi help" >&2

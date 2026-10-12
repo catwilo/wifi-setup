@@ -14,10 +14,14 @@ No se usa: dhcpcd, systemd-networkd, NetworkManager plugins externos.
     bin/wifi            dispatcher CLI puro
         -> install.sh | uninstall.sh | checks.sh
         -> source lib/*.sh segun subcomando
+        -> source lib/help.sh cuando se pide -h
         -> lib/*.sh llaman nmcli
 
 `bin/wifi` no ejecuta logica de negocio: cada `_cmd_*` valida args,
 sourcea el lib correspondiente, llama una funcion, imprime resultado.
+La ayuda vive en lib/help.sh (una funcion help_<sub> por subcomando);
+`_maybe_help <topic> "$@"` en cada `_cmd_*` intercepta `-h`/`--help`
+antes de tocar libs de negocio.
 
 ## Responsabilidades por archivo
 
@@ -27,29 +31,40 @@ sourcea el lib correspondiente, llama una funcion, imprime resultado.
     install.sh          Instalador. Instala stack, crea perfiles, no activa LAN/VPN.
     uninstall.sh        Desinstalador. Revierte install sin tocar perfiles NM.
     checks.sh           Verificacion post-install (read-only).
+    README.md           Guia de uso (subcomandos, modelo, estado conocido).
     .shellcheckrc       Disables justificados (SC1091 path dinamico, SC2034 globals).
 
 ### lib/
 
     common.sh           Bootstrap obligatorio: set -Eeuo, dirs, colores,
-                        source log.sh + safe.sh, die/require_root/require_dirs,
+                        source log.sh, die/require_root/require_dirs,
                         validate_interface, backup_file, sweep_legacy_install.
 
     log.sh              Output: ok/warn/err/info/section/step. Todo a stderr
                         + archivo sin ANSI.
 
-    safe.sh             Proteccion contra perdida de acceso remoto:
-                        snapshot + canary + watchdog + rollback automatico.
-                        Toda operacion critica pasa por safe_run. Configurable
-                        (canary default 100.103.104.19, timeout por operacion).
+    help.sh             Help modular. Paleta por categoria (STATE/RADIO/NET/
+                        MAC/USB/LAN/VPN/MONITOR/DIAG/EMERG) y una funcion
+                        help_<sub> por subcomando. Primero y unico lugar
+                        que define el texto de ayuda.
 
     detect.sh           Deteccion no destructiva: SSH iface + local IP.
 
     nm.sh               Wrapper fino sobre nmcli. Ningun otro modulo llama
-                        nmcli directo. Si NM cambia su interfaz, se ajusta aqui.
+                        nmcli directo (salvo scan.sh, que usa
+                        `nmcli dev wifi list --rescan yes` porque no hay
+                        wrapper para escaneo). Si NM cambia su interfaz,
+                        se ajusta aqui.
 
     radio.sh            Antenas WiFi (nativa + USB). Roles primary/secondary
-                        (persistente) + override de sesion. Up/down con safe_run.
+                        (persistente) + override de sesion.
+
+    scan.sh             Escaneo de redes WiFi visibles. Solo lectura: dispara
+                        rescan (nmcli dev wifi list --rescan yes) y lista.
+                        No crea perfiles, no conecta, no toca estado.
+
+    networks.sh         Store central de redes WiFi. TSV con una fila por
+                        (ssid, iface). merge (aditivo) y sync (idempotente).
 
     lan.sh              Cable ethernet. Perfiles NM (manual/shared/auto) con
                         autoconnect=off. Activacion manual con `wifi lan up`.
@@ -82,18 +97,39 @@ NO conecta Tailscale (eso es `wifi vpn up`).
 ## Flujo de `wifi <cmd>` (runtime)
 
     wifi status         NM + antenas + conexiones + LAN + VPN + internet
+    wifi ifaces         inventario fisico de antenas (kernel + NM)
+    wifi scan [--iface X]  escaneo de redes visibles ahora
     wifi radio *        antenas: list/primary/secondary/use/up/down
     wifi add <ssid>     crear perfil WiFi en la antena activa
+    wifi networks *     store: list/merge/sync
     wifi switch <ssid>  activar perfil guardado
     wifi lan setup ...  crear perfil del cable (NO activar)
     wifi lan up|down    activar/desactivar perfil LAN
     wifi vpn up|down    conectar/desconectar Tailscale
+    wifi monitor on|off cambiar iface a/desde modo monitor
+    wifi doctor [--fix] diagnostico + auto-fix
     wifi panic          reiniciar NM + reconectar antenas
-    wifi safe log       historico de operaciones criticas
 
-## Seguridad remota (safe_run)
+Cada subcomando acepta -h/--help. El dispatcher entrega el control a
+lib/help.sh antes de tocar el lib de negocio.
 
-Toda operacion que pueda cortar acceso SSH pasa por `safe_run <label> <timeout> <cmd...>`:
+## Seguridad remota (safe_run) -- DISENADO, NO IMPLEMENTADO
+
+La version previa de este documento describia una capa `safe_run` con
+snapshot + canary + watchdog + rollback automatico, y el help de
+`bin/wifi` listaba timeouts ("watchdog 60s", "watchdog 45s"). Ese
+codigo NO existe en el repo:
+
+- `lib/safe.sh` no existe.
+- `grep -rn safe_run lib/ bin/wifi` no devuelve coincidencias.
+- `wifi radio up|down`, `wifi lan up|down` y `wifi panic` llaman
+  `nm_con_up`/`nm_con_down` directo, sin wrapper.
+
+Estado real hoy: las operaciones de antena y LAN NO tienen rollback
+automatico. Si cortan el acceso remoto, la sesion SSH se pierde y hay
+que recuperar por consola fisica o por otra antena previamente activa.
+
+Diseno original (para reimplementar):
 
     1. Snapshot: guarda perfiles NM, wpa_supplicant, rutas, servicios.
     2. Canary: watchdog en background pinguea <canary> cada 2s.
@@ -102,11 +138,15 @@ Toda operacion que pueda cortar acceso SSH pasa por `safe_run <label> <timeout> 
     5. Si el canary falla 3 veces seguidas: rollback automatico.
     6. Si sobrevive <timeout>: exito, canary se detiene.
 
-Configuracion:
-    - canary default: 100.103.104.19 (persistible con `wifi canary set`)
-    - timeout: por operacion (radio up=60, radio down=45, lan up=75, etc.)
+Configuracion prevista:
+    - canary default: nodo externo (tx1).
+    - timeout: por operacion (radio up=60, radio down=45, lan up=75, etc.).
     - logs: BASE_DIR/logs/ops.log
     - snapshots: BASE_DIR/state/snapshots/
+
+Trabajo pendiente: implementar lib/safe.sh y enrutar por el las
+operaciones criticas. Mientras no exista, no prometerlo en la ayuda ni
+en este documento.
 
 ## Persistencia
 
@@ -114,10 +154,9 @@ Configuracion:
     STATE_DIR/radio.state           RADIO_PRIMARY, RADIO_SECONDARY
     STATE_DIR/radio.session         SESSION_OVERRIDE (no persiste)
     STATE_DIR/lan.state             LAN_IFACE, LAN_MODE, LAN_IP, LAN_GW
-    CONFIG_DIR/canary.default       canary IP o alias
+    STATE_DIR/networks.tsv          store central de redes WiFi
+    CONFIG_DIR/usb-names.conf       mapeos MAC -> nombre de iface USB
     LOG_DIR/wifi-setup.log          log general
-    LOG_DIR/ops.log                 historico de operaciones safe
-    LOG_DIR/uplink-hook.log         (legacy, ya no se escribe)
 
 ## Decisiones no obvias
 
@@ -128,20 +167,13 @@ multiples interfaces, perfiles por red con prioridad, DHCP por iface, MAC
 clonada, NAT (`ipv4.method shared`), IP estatica (`ipv4.method manual`).
 iwd queda instalado, parado, disabled -- fallback manual si NM falla.
 
-### Por que safe_run con canary a un nodo externo
+### Por que timeout por operacion (cuando safe_run exista)
 
-Los comandos se mandan por nssh via Tailscale. Si un cambio rompe WiFi o
-rutas, la sesion SSH muere y no hay forma de mandar "rollback". El canary
-pinguea un nodo externo (tx1 por defecto): si tx1 deja de responder 3 veces
-seguidas, el watchdog asume que perdimos acceso y restaura el snapshot sin
-esperar ordenes. La sesion vuelve sola cuando el acceso se restablece.
-
-### Por que timeout por operacion y no global
-
-Subir una antena puede tardar 5s; subir una LAN con NAT + DHCP + verificacion
-puede tardar 60s. Un timeout unico seria o muy corto (rollback innecesario)
-o muy largo (esperas largas cuando hay fallo real). Cada comando define su
-default apropiado, siempre override con `--timeout N`.
+Subir una antena puede tardar 5s; subir una LAN con NAT + DHCP +
+verificacion puede tardar 60s. Un timeout unico seria o muy corto
+(rollback innecesario) o muy largo (esperas largas cuando hay fallo
+real). Cada comando define su default apropiado, siempre override con
+`--timeout N`. Aplica solo al diseno de safe_run.
 
 ### Por que installer NO activa el cable LAN
 
@@ -163,4 +195,13 @@ Tener dos antenas WiFi no significa que una deba estar apagada. Ambas
 pueden estar conectadas a redes distintas simultaneamente (una a la red de
 casa, otra a un hotspot). PRIMARY/SECONDARY solo controla la prioridad
 de ruta cuando ambas tienen internet. `wifi radio down` es la unica forma
-de apagar una antena, y siempre con `safe_run`.
+de apagar una antena.
+
+### Por que help modular en lib/help.sh
+
+El help top-level vivia antes como heredoc dentro de bin/wifi: tocarlo
+implicaba editar el dispatcher. Ahora bin/wifi solo enruta; lib/help.sh
+concentra todo el texto y agrega `help_<sub>` por subcomando. El
+resultado: `wifi <sub> -h` funciona para cada subcomando sin tocar la
+logica, y colorear el help (por categoria) no mezcla presentacion con
+dispatch.
