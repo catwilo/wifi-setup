@@ -46,9 +46,12 @@ if [[ -t 1 ]]; then
     H_CAT_MONITOR="${C_CYAN}"
     H_CAT_DIAG="${C_YELLOW}"
     H_CAT_EMERG="${C_RED}"
+    H_CAT_FALLBACK="${C_YELLOW}"
+    H_CAT_EMERG="${C_RED}"
 else
     H_TITLE='' H_SECTION='' H_CMD='' H_ARG='' H_KEY='' H_WARN=''
     H_DIM='' H_RESET=''
+    H_CAT_LAN='' H_CAT_VPN='' H_CAT_MONITOR='' H_CAT_DIAG='' H_CAT_EMERG='' H_CAT_FALLBACK=''
     H_CAT_STATE='' H_CAT_RADIO='' H_CAT_NET='' H_CAT_MAC='' H_CAT_USB=''
     H_CAT_LAN='' H_CAT_VPN='' H_CAT_MONITOR='' H_CAT_DIAG='' H_CAT_EMERG=''
 fi
@@ -176,6 +179,7 @@ help_index() {
     _help_cmd "  " "sudo wifi doctor --fix"        "aplica fixes seguros"
 
     _help_cat EMERG "EMERGENCIA"
+    _help_cat FALLBACK "FALLBACK (iwd vs NetworkManager)"
     _help_cmd "  " "sudo wifi panic"               "reinicia NM, reconecta antenas"
 
     _help_cat EMERG "FALLBACK (iwd vs NetworkManager)"

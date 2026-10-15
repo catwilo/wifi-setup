@@ -65,3 +65,22 @@ setup() { setup_env; }
         fi
     done <<< "$subs"
 }
+
+@test "bin/wifi: subcomandos con funcion _cmd_* tambien tienen help_<sub>" {
+    cd "$REPO"
+    local subs sub hlp
+    subs="$(sed -n '/^case "\${CMD}"/,/^esac/p' bin/wifi \
+        | grep -oE '^\s+[a-z-]+\)' | tr -d ' )' | sort -u || true)"
+    [ -n "$subs" ]
+    while IFS= read -r sub; do
+        case "$sub" in
+            install|uninstall|remove|check|verify|version|help) continue ;;
+            -*) continue ;;
+        esac
+        hlp="help_$(printf '%s' "$sub" | tr '-' '_')"
+        if ! grep -qE "^${hlp}\(\)" lib/help.sh; then
+            echo "subcomando '${sub}' sin funcion ${hlp}() en lib/help.sh" >&3
+            return 1
+        fi
+    done <<< "$subs"
+}

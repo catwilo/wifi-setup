@@ -1,7 +1,7 @@
 # wifi-setup
 
 WiFi + LAN + VPN sobre NetworkManager para Debian 13+. Backbone unico:
-NetworkManager. Fallback manual: iwd (instalado, parado).
+NetworkManager. Fallback: iwd con DHCP integrado (`wifi fallback on`).
 
 Soporta dos antenas simultaneas -- nativa (PCI) y USB externa -- con
 perfiles y prioridades independientes por antena.
@@ -12,9 +12,9 @@ perfiles y prioridades independientes por antena.
 
 Auto-detecta antenas (USB=PRIMARY, nativa=SECONDARY), pregunta SSID/PSK
 si no hay perfiles previos, y deja NM como gestor de red, iwd como
-fallback parado, SSH hardened en el puerto 22, y Tailscale instalado y
-apagado. Relanza en tmux para sobrevivir cortes de SSH durante el
-install.
+fallback manual (parado, activable con `wifi fallback on`), SSH
+hardened en el puerto 22, y Tailscale instalado y apagado. Relanza en
+tmux para sobrevivir cortes de SSH durante el install.
 
 El cable LAN NO se configura en el install: usa `wifi lan setup` cuando
 lo necesites.
@@ -23,11 +23,12 @@ lo necesites.
 
     sudo wifi status                 # NM + antenas + conexiones + LAN + VPN + internet
     sudo wifi ifaces                 # inventario fisico de antenas
-    sudo wifi scan                   # escaneo de redes visibles ahora
-    sudo wifi scan --iface wlan0     # escaneo solo en una antena
-    sudo wifi add <ssid>             # crear perfil (pide PSK interactivo)
+    sudo wifi scan                   # escaneo: SSIDs entre comillas
+    sudo wifi add                    # picker fzf sobre el ultimo scan
+    sudo wifi add <ssid>             # crear perfil directo (PSK interactivo)
     sudo wifi networks               # tabla unificada del store de redes
     sudo wifi radio list             # rol y estado por antena
+    sudo wifi fallback status        # quien maneja WiFi: NM o iwd
     sudo wifi doctor                 # diagnostico read-only del stack
 
 Cada subcomando acepta `-h`/`--help` para su ayuda detallada:
@@ -42,7 +43,7 @@ Cada subcomando acepta `-h`/`--help` para su ayuda detallada:
 
     wifi status          NM, antenas, conexiones, LAN, VPN, internet
     wifi ifaces          inventario fisico: kernel + NM + huerfanos
-    wifi scan [--iface X]  escaneo de redes visibles ahora
+    wifi scan [--iface X]  escaneo: SSIDs entre comillas (visibilidad de espacios)
     wifi networks        tabla unificada del store de redes
     wifi showmac <profile>  MAC clonada del perfil
     wifi lan status      estado del perfil LAN
@@ -67,11 +68,11 @@ Cada subcomando acepta `-h`/`--help` para su ayuda detallada:
 
 ### Redes WiFi (perfiles y store)
 
-    sudo wifi add <ssid> [--iface X] [--pass P]  crear perfil
-    sudo wifi switch <ssid> [iface]              activar perfil guardado
-    sudo wifi passwd <profile>                   cambiar PSK
-    sudo wifi showpass <profile>                 mostrar PSK en claro
-    sudo wifi autoconnect <profile> <on|off>     autoconnect manual
+    sudo wifi add [<ssid>] [--iface X] [--pass P]  crear (picker fzf sin <ssid>)
+    sudo wifi switch <ssid> [iface]                activar perfil guardado
+    sudo wifi passwd <profile|ssid> [--pass P]     cambiar PSK (reconecta)
+    sudo wifi showpass <profile>                   mostrar PSK en claro
+    sudo wifi autoconnect <profile> <on|off>       autoconnect manual
 
     sudo wifi networks list     tabla del store + presencia del perfil NM
     sudo wifi networks merge    fundir perfiles NM al store (aditivo)
@@ -121,6 +122,16 @@ Cada subcomando acepta `-h`/`--help` para su ayuda detallada:
     Si es la unica antena con conexion, ponerla en monitor corta el
     acceso remoto. El comando avisa pero no bloquea.
 
+### Fallback (iwd vs NetworkManager)
+
+    sudo wifi fallback on        pasa el control a iwd (NM parado)
+    sudo wifi fallback off       vuelve a NetworkManager (iwd parado)
+    wifi fallback status         quien esta al mando ahora
+
+    iwd arranca con DHCP integrado (EnableNetworkConfiguration=true en
+    /etc/iwd/main.conf). El estado previo de NM/iwd se guarda en
+    fallback.state y se restaura con fallback off.
+
 ### Diagnostico y emergencia
 
     sudo wifi doctor [--fix]     reporte del stack (--fix aplica fixes seguros)
@@ -142,7 +153,7 @@ Cada subcomando acepta `-h`/`--help` para su ayuda detallada:
   las filas del mismo SSID. `merge` es aditivo (nunca borra); `sync`
   regenera perfiles NM desde el store.
 - **Persistencia**: STATE_DIR/install.state, radio.state, radio.session,
-  lan.state, networks.tsv.
+  lan.state, networks.tsv, fallback.state, last-scan.txt.
 - **Ficheros de config**: CONFIG_DIR/usb-names.conf (mapeos MAC -> iface).
 
 ## Diagnostico
@@ -153,6 +164,5 @@ Cada subcomando acepta `-h`/`--help` para su ayuda detallada:
 
 ## Arquitectura
 
-Ver `docs/architecture-map.md` para el mapa de modulos y las decisiones
-de diseno.
+Ver `ARCHITECTURE.md` para el mapa de modulos y las decisiones de diseno.
 

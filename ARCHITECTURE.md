@@ -4,9 +4,13 @@
 
     NetworkManager         WiFi + ethernet + DHCP + NAT (backbone)
     wpa_supplicant         backend WiFi de NM (por defecto)
-    iwd                    fallback manual (instalado, parado, disabled)
+    iwd                    fallback con DHCP integrado (`wifi fallback on`)
+    Tailscale              VPN (instalado, apagado hasta `wifi vpn up`)
     Tailscale              VPN (instalado, apagado hasta `wifi vpn up`)
 
+En modo backbone no se usa dhcpcd ni systemd-networkd. En modo fallback
+(`wifi fallback on`) iwd hace DHCP por si mismo -- DHCP integrado via
+EnableNetworkConfiguration=true en /etc/iwd/main.conf.
 No se usa: dhcpcd, systemd-networkd, NetworkManager plugins externos.
 
 ## Capas
@@ -62,6 +66,11 @@ antes de tocar libs de negocio.
     scan.sh             Escaneo de redes WiFi visibles. Solo lectura: dispara
                         rescan (nmcli dev wifi list --rescan yes) y lista.
                         No crea perfiles, no conecta, no toca estado.
+                        Los SSID se imprimen entre comillas dobles (--names
+                        y last-scan.txt) para hacer visibles los espacios al
+                        inicio/fin; _add_pick_ssid despoja las comillas al
+                        elegir.
+                        No crea perfiles, no conecta, no toca estado.
 
     networks.sh         Store central de redes WiFi. TSV con una fila por
                         (ssid, iface). merge (aditivo) y sync (idempotente).
@@ -74,6 +83,11 @@ antes de tocar libs de negocio.
 
     ssh.sh              Hardening SSH con rollback si sshd -t falla.
 
+    deps.sh             Instalacion apt: NetworkManager + iwd + utilidades.
+
+    fallback.sh         Alterna entre NM (backbone) e iwd (fallback con DHCP
+                        integrado). fallback_on/off/status. Guarda el estado
+                        previo en fallback.state para restauracion exacta.
     deps.sh             Instalacion apt: NetworkManager + iwd + utilidades.
 
 ## Flujo de `install.sh`
@@ -100,14 +114,17 @@ NO conecta Tailscale (eso es `wifi vpn up`).
     wifi ifaces         inventario fisico de antenas (kernel + NM)
     wifi scan [--iface X]  escaneo de redes visibles ahora
     wifi radio *        antenas: list/primary/secondary/use/up/down
-    wifi add <ssid>     crear perfil WiFi en la antena activa
+    wifi add [<ssid>]   crear perfil + conectar (picker fzf sin <ssid>)
     wifi networks *     store: list/merge/sync
     wifi switch <ssid>  activar perfil guardado
+    wifi passwd <profile|ssid>  cambiar PSK y reconectar
+    wifi fallback *     alternar NM (backbone) e iwd (fallback)
     wifi lan setup ...  crear perfil del cable (NO activar)
     wifi lan up|down    activar/desactivar perfil LAN
     wifi vpn up|down    conectar/desconectar Tailscale
     wifi monitor on|off cambiar iface a/desde modo monitor
     wifi doctor [--fix] diagnostico + auto-fix
+    wifi panic          reiniciar NM + reconectar antenas
     wifi panic          reiniciar NM + reconectar antenas
 
 Cada subcomando acepta -h/--help. El dispatcher entrega el control a
@@ -121,7 +138,10 @@ lib/help.sh antes de tocar el lib de negocio.
     STATE_DIR/radio.session         SESSION_OVERRIDE (no persiste)
     STATE_DIR/lan.state             LAN_IFACE, LAN_MODE, LAN_IP, LAN_GW
     STATE_DIR/networks.tsv          store central de redes WiFi
+    STATE_DIR/fallback.state        estado previo de NM/iwd antes de fallback_on
+    STATE_DIR/last-scan.txt         lista de SSID del ultimo scan (con comillas)
     CONFIG_DIR/usb-names.conf       mapeos MAC -> nombre de iface USB
+    LOG_DIR/wifi-setup.log          log general
     LOG_DIR/wifi-setup.log          log general
 
 ## Decisiones no obvias
@@ -163,4 +183,14 @@ implicaba editar el dispatcher. Ahora bin/wifi solo enruta; lib/help.sh
 concentra todo el texto y agrega `help_<sub>` por subcomando. El
 resultado: `wifi <sub> -h` funciona para cada subcomando sin tocar la
 logica, y colorear el help (por categoria) no mezcla presentacion con
+dispatch.
+
+### Por que iwd hace su propio DHCP en fallback
+
+En modo backbone, NM gestiona DHCP por iface. En modo fallback, con NM
+enmascarado, no hay quien asigne IP por DHCP -- salvo iwd. La directiva
+EnableNetworkConfiguration=true en /etc/iwd/main.conf habilita el cliente
+DHCP integrado de iwd. `fallback_on` la escribe si falta, preservando el
+resto del archivo. `_fallback_wait_ip` confirma la asignacion y avisa si
+iwd no conoce la red (requiere `iwctl station <iface> connect <ssid>`).
 dispatch.
