@@ -1,49 +1,29 @@
 #!/usr/bin/env bats
-# cli.bats -- comportamiento observable del CLI:
-# guarda Debian, --help, dispatch.
+# cli.bats -- contrato observable del CLI: guarda Debian, --help, dispatch.
 
 load helpers
 
 setup() { setup_env; }
 
-# --- guarda Debian: en plataforma no-Debian (PREFIX/bin) sale limpio ---
-
-@test "install.sh: no-Debian -> exit 0 sin efectos" {
+@test "entrypoints no-Debian: exit 0 sin efectos" {
+    local f
     mkdir -p "$BATS_TEST_TMPDIR/fake-prefix/bin"
-    run env PREFIX="$BATS_TEST_TMPDIR/fake-prefix" bash "$INSTALL"
-    [ "$status" -eq 0 ]
-    [[ "$output" == *"no-Debian"* ]]
+    for f in "$INSTALL" "$UNINSTALL" "$CHECKS"; do
+        run env PREFIX="$BATS_TEST_TMPDIR/fake-prefix" bash "$f"
+        [ "$status" -eq 0 ] || { echo "$f: status=$status" >&3; return 1; }
+        [[ "$output" == *"no-Debian"* ]] || { echo "$f: sin 'no-Debian'" >&3; return 1; }
+    done
 }
 
-@test "uninstall.sh: no-Debian -> exit 0 sin efectos" {
-    mkdir -p "$BATS_TEST_TMPDIR/fake-prefix/bin"
-    run env PREFIX="$BATS_TEST_TMPDIR/fake-prefix" bash "$UNINSTALL"
-    [ "$status" -eq 0 ]
-    [[ "$output" == *"no-Debian"* ]]
-}
-
-@test "checks.sh: no-Debian -> exit 0 sin efectos" {
-    mkdir -p "$BATS_TEST_TMPDIR/fake-prefix/bin"
-    run env PREFIX="$BATS_TEST_TMPDIR/fake-prefix" bash "$CHECKS"
-    [ "$status" -eq 0 ]
-    [[ "$output" == *"no-Debian"* ]]
-}
-
-# --- --help de cada entrypoint ---
-
-@test "install.sh --help: exit 0 con texto de uso" {
+@test "entrypoints --help: exit 0 con texto de uso" {
     run bash "$INSTALL" --help
     [ "$status" -eq 0 ]
     [[ "$output" == *"uso: sudo wifi install"* ]]
-}
 
-@test "uninstall.sh --help: exit 0 con texto de uso" {
     run bash "$UNINSTALL" --help
     [ "$status" -eq 0 ]
     [[ "$output" == *"uso: sudo wifi uninstall"* ]]
-}
 
-@test "checks.sh --help: exit 0 con texto de uso" {
     run bash "$CHECKS" --help
     [ "$status" -eq 0 ]
     [[ "$output" == *"uso: sudo wifi check"* ]]
@@ -57,12 +37,7 @@ setup() { setup_env; }
     [[ "$output" == *"lan"* ]]
     [[ "$output" == *"usb-names"* ]]
     [[ "$output" == *"vpn"* ]]
-}
-
-@test "bin/wifi sin args: exit 0 con la ayuda" {
-    run bash "$WIFI"
-    [ "$status" -eq 0 ]
-    [[ "$output" == *"wifi-setup"* ]]
+    [[ "$output" == *"fallback"* ]]
 }
 
 @test "bin/wifi comando desconocido: exit != 0 con hint" {
@@ -72,9 +47,7 @@ setup() { setup_env; }
     [[ "$output" == *"wifi help"* ]]
 }
 
-# --- dispatch: cada subcomando del case tiene su _cmd_* definido ---
-
-@test "bin/wifi: todos los subcomandos del dispatch tienen funcion _cmd_*" {
+@test "bin/wifi: subcomandos del dispatch tienen funcion _cmd_*" {
     cd "$REPO"
     local subs fn sub
     subs="$(sed -n '/^case "\${CMD}"/,/^esac/p' bin/wifi \

@@ -202,10 +202,12 @@ _cmd_add() {
             --iface) iface="${2:-}"; shift 2 ;;
             --pass)  pass="${2:-}";  shift 2 ;;
             -h|--help)
-                echo "uso: wifi add <ssid> [--iface X] [--pass P]"
+                echo "uso: wifi add [<ssid>] [--iface X] [--pass P]"
                 echo ""
-                echo "Crea un perfil WiFi. Sin --iface usa la antena PRIMARY"
-                echo "(o la unica disponible). Sin --pass lo pide interactivo."
+                echo "Crea un perfil WiFi y se conecta de inmediato."
+                echo "Sin <ssid> y con fzf + wifi scan previo, abre un picker."
+                echo "Sin --iface usa la antena PRIMARY (o la unica disponible)."
+                echo "Sin --pass pide la PSK interactivo (min 8 caracteres)."
                 exit 0 ;;
             *)
                 if [[ -z "${ssid}" ]]; then
@@ -217,7 +219,11 @@ _cmd_add() {
                 ;;
         esac
     done
-    [[ -n "${ssid}" ]] || _die "uso: wifi add <ssid> [--iface X]"
+
+    if [[ -z "${ssid}" ]]; then
+        ssid="$(_add_pick_ssid || true)"
+    fi
+    [[ -n "${ssid}" ]] || _die "uso: wifi add [<ssid>] [--iface X] [--pass P]"
 
     if [[ -z "${iface}" ]]; then
         _radio_load_state
@@ -227,7 +233,7 @@ _cmd_add() {
     radio_is_iface "${iface}" || _die "'${iface}' no es WiFi"
 
     if [[ -z "${pass}" ]]; then
-        read -r -s -p "PSK para '${ssid}' (min 8): " pass
+        IFS= read -r -s -p "PSK para '${ssid}' (min 8): " pass
         echo
     fi
     [[ "${#pass}" -ge 8 ]] || _die "PSK minimo 8 caracteres"
@@ -236,6 +242,30 @@ _cmd_add() {
     nm_wifi_create "${profile}" "${iface}" "${ssid}" "${pass}"
     nm_con_set_autoconnect "${profile}" on
     ok "red '${ssid}' agregada en ${iface} (perfil: ${profile})"
+
+    info "intentando conectar a '${ssid}'..."
+    local up_rc=0
+    nm_con_up "${profile}" || up_rc=$?
+    if [[ "${up_rc}" -eq 0 ]]; then
+        ok "conectado a '${ssid}' via ${iface}"
+    else
+        err "no se pudo conectar a '${ssid}' (rc=${up_rc})"
+        err "causas comunes: red fuera de rango, PSK incorrecta, driver con problema"
+        err "revisa: wifi doctor | wifi showpass '${profile}'"
+    fi
+}
+
+# _add_pick_ssid -- picker fzf sobre el ultimo escaneo guardado.
+# Imprime el SSID elegido; vacio si fzf o la cache no estan disponibles
+# (en ese caso el caller cae al prompt textual normal).
+_add_pick_ssid() {
+    local cache="${STATE_DIR}/last-scan.txt"
+    command -v fzf >/dev/null 2>&1 || return 0
+    if [[ ! -s "${cache}" ]]; then
+        warn "no hay escaneo previo -- corre 'wifi scan' para el picker fzf"
+        return 0
+    fi
+    fzf --prompt='SSID> ' --height=40% < "${cache}"
 }
 
 # ---------------------------------------------------------------------------
@@ -294,18 +324,70 @@ _cmd_passwd() {
     _load nm
     require_root
 
-    local profile="${1:-}"
-    [[ -n "${profile}" ]] || _die "uso: wifi passwd <profile>  (ver: wifi networks)"
+    local target="" pass=""
+    while [[ "$#" -gt 0 ]]; do
+        case "$1" in
+            --pass) pass="${2:-}"; shift 2 ;;
+            -h|--help)
+                echo "uso: wifi passwd <profile|ssid> [--pass P]"
+                echo ""
+                echo "Cambia la PSK del perfil y reconecta."
+                echo "Acepta el nombre del perfil ('wifi-<iface>-<ssid>') o el SSID."
+                echo "Sin --pass pide la PSK interactivo (min 8 caracteres)."
+                exit 0 ;;
+            *)
+                if [[ -z "${target}" ]]; then
+                    target="$1"
+                else
+                    _die "argumento inesperado: $1"
+                fi
+                shift
+                ;;
+        esac
+    done
+    [[ -n "${target}" ]] || _die "uso: wifi passwd <profile|ssid> [--pass P]"
 
-    nm_con_exists "${profile}" || _die "perfil '${profile}' no existe"
+    local profile
+    profile="$(_passwd_resolve_profile "${target}")" \
+        || _die "no hay perfil para '${target}' -- usa: wifi networks"
 
-    local psk
-    read -r -s -p "nuevo PSK (min 8): " psk; echo
-    [[ "${#psk}" -ge 8 ]] || _die "minimo 8 caracteres"
+    if [[ -z "${pass}" ]]; then
+        IFS= read -r -s -p "nuevo PSK para '${profile}' (min 8): " pass
+        echo
+    fi
+    [[ "${#pass}" -ge 8 ]] || _die "minimo 8 caracteres"
 
-    nmcli con mod "${profile}" 802-11-wireless-security.psk "${psk}"
-    nmcli con up "${profile}" >/dev/null
-    ok "PSK actualizado y reconectado"
+    nmcli con mod "${profile}" 802-11-wireless-security.psk "${pass}"
+    info "PSK actualizada, reconectando '${profile}'..."
+    local up_rc=0
+    nm_con_up "${profile}" || up_rc=$?
+    if [[ "${up_rc}" -eq 0 ]]; then
+        ok "PSK actualizada y reconectado"
+    else
+        err "PSK actualizada, pero no reconecto (rc=${up_rc})"
+        err "revisa: wifi doctor | wifi showpass '${profile}'"
+    fi
+}
+
+# _passwd_resolve_profile <profile|ssid> -- imprime el nombre de perfil.
+# Si el argumento es un perfil existente, lo usa tal cual. Si no, lo
+# busca como SSID en todos los perfiles WiFi conocidos por NM.
+_passwd_resolve_profile() {
+    local arg="$1" name ssid
+    if nm_con_exists "${arg}"; then
+        printf '%s\n' "${arg}"
+        return 0
+    fi
+    while IFS= read -r name; do
+        [[ -n "${name}" ]] || continue
+        ssid="$(nmcli -t -g 802-11-wireless.ssid con show "${name}" 2>/dev/null || true)"
+        if [[ "${ssid}" == "${arg}" ]]; then
+            printf '%s\n' "${name}"
+            return 0
+        fi
+    done < <(nmcli -t -f NAME,TYPE con show 2>/dev/null \
+        | awk -F: '$2=="802-11-wireless"{print $1}')
+    return 1
 }
 
 # ---------------------------------------------------------------------------
@@ -545,6 +627,24 @@ _cmd_scan() {
 }
 
 # ---------------------------------------------------------------------------
+# fallback <on|off|status> -- alterna entre NM (backbone) e iwd (fallback).
+# ---------------------------------------------------------------------------
+_cmd_fallback() {
+    _maybe_help fallback "$@"
+
+    local sub="${1:-status}"
+    shift || true
+
+    _load fallback
+    case "${sub}" in
+        on)        require_root; fallback_on ;;
+        off)       require_root; fallback_off ;;
+        status|"") fallback_status ;;
+        *) _die "uso: wifi fallback <on|off|status>" ;;
+    esac
+}
+
+# ---------------------------------------------------------------------------
 # version / help
 # ---------------------------------------------------------------------------
 _cmd_version() {
@@ -584,6 +684,7 @@ case "${CMD}" in
     lan)             _cmd_lan "$@" ;;
     usb-names)       _cmd_usb_names "$@" ;;
     vpn)             _cmd_vpn "$@" ;;
+    fallback)        _cmd_fallback "$@" ;;
     version|-v|--version) _cmd_version "$@" ;;
     help|-h|--help|"")    _cmd_help "$@" ;;
     *)

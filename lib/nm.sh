@@ -87,16 +87,19 @@ nm_con_delete() {
     fi
 }
 
-# nm_con_up <name> -- activa un perfil.
+# nm_con_up <name> -- activa un perfil. Sin redireccion: la salida real
+# de nmcli (stdout + stderr) llega al caller para que el usuario vea la
+# causa exacta del exito o del fallo.
 nm_con_up() {
     local name="$1"
-    nmcli con up "${name}" >/dev/null
+    nmcli con up "${name}"
 }
 
-# nm_con_down <name> -- desactiva un perfil.
+# nm_con_down <name> -- desactiva un perfil. Sin redireccion: la salida
+# de nmcli llega al caller, que decide si mostrarla o registrarla.
 nm_con_down() {
     local name="$1"
-    nmcli con down "${name}" >/dev/null
+    nmcli con down "${name}"
 }
 
 # nm_con_set_autoconnect <name> on|off

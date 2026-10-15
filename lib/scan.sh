@@ -116,6 +116,38 @@ _scan_snapshot() {
         fi
     fi
     _scan_render "${iface}"
+    _scan_persist_ssids "${iface}"
+}
+
+# _scan_persist_ssids <iface> -- guarda la lista de SSID visibles en
+# STATE_DIR/last-scan.txt para que 'wifi add' sin <ssid> la use como
+# picker fzf. Reutiliza la cache de nmcli (sin --rescan): no dispara un
+# escaneo adicional. Best-effort: si falla, no rompe el flujo del scan.
+_scan_persist_ssids() {
+    local iface="$1"
+    local cache="${STATE_DIR}/last-scan.txt"
+    mkdir -p "${STATE_DIR}" || return 0
+
+    local raw
+    if [[ -n "${iface}" ]]; then
+        raw="$(PAGER=cat NMPAGER=cat nmcli -t -f SSID dev wifi list ifname "${iface}" 2>/dev/null || true)"
+    else
+        raw="$(PAGER=cat NMPAGER=cat nmcli -t -f SSID dev wifi list 2>/dev/null || true)"
+    fi
+    [[ -n "${raw}" ]] || return 0
+
+    local tmp
+    tmp="$(mktemp "${STATE_DIR}/last-scan.XXXXXX")" || return 0
+    declare -A seen=()
+    local line
+    while IFS= read -r line; do
+        [[ -n "${line}" ]] || continue
+        [[ -n "${seen[${line}]:-}" ]] && continue
+        seen["${line}"]=1
+        printf '%s\n' "${line}"
+    done <<< "${raw}" > "${tmp}"
+    mv "${tmp}" "${cache}"
+    chmod 600 "${cache}"
 }
 
 # ---------------------------------------------------------------------------

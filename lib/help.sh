@@ -130,12 +130,12 @@ help_index() {
 
     _help_cat NET "REDES WiFi"
     _help_cmd "  " "sudo wifi scan [--iface X]"    "escaneo: redes visibles ahora"
-    _help_cmd "  " "sudo wifi add <ssid>"          "crea perfil (interactivo PSK)"
+    _help_cmd "  " "sudo wifi add [<ssid>]"        "crear + conectar (picker fzf)"
     _help_cmd "  " "wifi networks [list]"          "tabla unificada del store de redes"
     _help_cmd "  " "sudo wifi networks merge"      "funde perfiles NM al store"
     _help_cmd "  " "sudo wifi networks sync"       "regenera perfiles NM desde el store"
     _help_cmd "  " "sudo wifi switch <ssid>"       "cambia al perfil guardado"
-    _help_cmd "  " "sudo wifi passwd <profile>"    "cambia PSK"
+    _help_cmd "  " "sudo wifi passwd <ssid|perfil>" "cambia PSK + reconecta"
     _help_cmd "  " "sudo wifi showpass <profile>"  "muestra PSK"
     _help_cmd "  " "sudo wifi autoconnect <profile> <on|off>" "autoconnect manual"
 
@@ -177,6 +177,11 @@ help_index() {
 
     _help_cat EMERG "EMERGENCIA"
     _help_cmd "  " "sudo wifi panic"               "reinicia NM, reconecta antenas"
+
+    _help_cat EMERG "FALLBACK (iwd vs NetworkManager)"
+    _help_cmd "  " "sudo wifi fallback on"         "pasa a iwd (NM apagado)"
+    _help_cmd "  " "sudo wifi fallback off"        "vuelve a NetworkManager"
+    _help_cmd "  " "wifi fallback status"          "quien esta al mando"
 
     _help_cat STATE "INSTALACION"
     _help_cmd "  " "sudo wifi install"             "instala NM, perfiles, hardening, tailscale"
@@ -240,69 +245,56 @@ help_radio() {
 help_scan() {
     _help_title "wifi scan -- escanear redes WiFi visibles"
     _help_usage "sudo wifi scan [--iface X] [--live] [--names]"
-    printf '
-'
+    printf '\n'
     _help_intro "Dispara un rescan sobre las antenas WiFi y lista las redes"
     _help_intro "visibles ahora. Solo lectura: no crea perfiles, no conecta."
-    printf '
-'
+    printf '\n'
     _help_intro "Modos de salida:"
-    printf '  %s(sin flags)%s  tabla completa: IN-USE, BSSID, SSID, CHAN, SIGNAL, SECURITY
-' "${H_KEY}" "${H_RESET}"
-    printf '  %s--names%s      lista plana: solo SSID, uno por linea, deduplicado
-' "${H_KEY}" "${H_RESET}"
-    printf '
-'
+    printf '  %s(sin flags)%s  tabla completa: IN-USE, BSSID, SSID, CHAN, SIGNAL, SECURITY\n' "${H_KEY}" "${H_RESET}"
+    printf '  %s--names%s      lista plana: solo SSID, uno por linea, deduplicado\n' "${H_KEY}" "${H_RESET}"
+    printf '\n'
     _help_intro "Modos de refresco:"
-    printf '  %s(sin flags)%s  una sola foto: imprime y termina
-' "${H_KEY}" "${H_RESET}"
-    printf '  %s--live%s       refresca cada 5s hasta Ctrl-C
-' "${H_KEY}" "${H_RESET}"
-    printf '
-'
+    printf '  %s(sin flags)%s  una sola foto: imprime y termina\n' "${H_KEY}" "${H_RESET}"
+    printf '  %s--live%s       refresca cada 5s hasta Ctrl-C\n' "${H_KEY}" "${H_RESET}"
+    printf '\n'
     _help_intro "Las dos dimensiones se combinan libremente:"
-    printf '  %swifi scan --names%s          lista plana puntual
-' "${H_CMD}" "${H_RESET}"
-    printf '  %swifi scan --live%s           tabla que se refresca
-' "${H_CMD}" "${H_RESET}"
-    printf '  %swifi scan --live --names%s   lista plana que se refresca
-' "${H_CMD}" "${H_RESET}"
-    printf '
-'
+    printf '  %swifi scan --names%s          lista plana puntual\n' "${H_CMD}" "${H_RESET}"
+    printf '  %swifi scan --live%s           tabla que se refresca\n' "${H_CMD}" "${H_RESET}"
+    printf '  %swifi scan --live --names%s   lista plana que se refresca\n' "${H_CMD}" "${H_RESET}"
+    printf '\n'
     _help_intro "Sin --iface: si hay PRIMARY persistida, escanea solo esa"
     _help_intro "antena. Si no hay PRIMARY, deja que NM escanee en todas."
-    printf '
-'
+    printf '\n'
     _help_intro "El rescan requiere root: nmcli dispara el escaneo via"
     _help_intro "la accion polkit org.freedesktop.NetworkManager.wifi.scan."
-    printf '
-'
-    _help_intro "El paginador esta desactivado (PAGER=cat): la salida se"
-    _help_intro "imprime completa, sin less ni prompts de lines N-M."
-    printf '
-'
+    printf '\n'
+    _help_intro "Cada snapshot guarda la lista de SSID en STATE_DIR/last-scan.txt"
+    _help_intro "para que 'wifi add' sin <ssid> la use como picker fzf."
+    printf '\n'
     _help_intro "Columnas que emite nmcli dev wifi list:"
-    printf '  %sIN-USE%s  * si la red esta en uso en esa antena
-' "${H_KEY}" "${H_RESET}"
-    printf '  %sBSSID%s   MAC del punto de acceso
-' "${H_KEY}" "${H_RESET}"
-    printf '  %sSSID%s    nombre de la red
-' "${H_KEY}" "${H_RESET}"
-    printf '  %sCHAN%s    canal
-' "${H_KEY}" "${H_RESET}"
-    printf '  %sSIGNAL%s  calidad 0-100
-' "${H_KEY}" "${H_RESET}"
-    printf '  %sSECURITY%s  WPA1/2/3, WEP o abierta
-' "${H_KEY}" "${H_RESET}"
+    printf '  %sIN-USE%s  * si la red esta en uso en esa antena\n' "${H_KEY}" "${H_RESET}"
+    printf '  %sBSSID%s   MAC del punto de acceso\n' "${H_KEY}" "${H_RESET}"
+    printf '  %sSSID%s    nombre de la red\n' "${H_KEY}" "${H_RESET}"
+    printf '  %sCHAN%s    canal\n' "${H_KEY}" "${H_RESET}"
+    printf '  %sSIGNAL%s  calidad 0-100\n' "${H_KEY}" "${H_RESET}"
+    printf '  %sSECURITY%s  WPA1/2/3, WEP o abierta\n' "${H_KEY}" "${H_RESET}"
 }
 
 help_add() {
-    _help_title "wifi add -- crear un perfil WiFi"
-    _help_usage "sudo wifi add <ssid> [--iface X] [--pass P]"
+    _help_title "wifi add -- crear y conectar un perfil WiFi"
+    _help_usage "sudo wifi add [<ssid>] [--iface X] [--pass P]"
     printf '\n'
+    _help_intro "Sin <ssid>: si fzf esta instalado y existe un escaneo"
+    _help_intro "previo (STATE_DIR/last-scan.txt), abre un picker sobre los"
+    _help_intro "SSID visibles. Corre 'wifi scan' antes para poblarlo."
     _help_intro "Sin --iface usa la antena PRIMARY (o la unica disponible)."
     _help_intro "Sin --pass pide la PSK interactivo (min 8 caracteres)."
     printf '\n'
+    _help_intro "La PSK admite espacios al inicio y al final: se preservan"
+    _help_intro "tal cual se escriben."
+    printf '\n'
+    _help_intro "Tras crear el perfil, se intenta conectar de inmediato y"
+    _help_intro "se muestra la salida real de nmcli (exito o causa de fallo)."
     _help_intro "El perfil queda con autoconnect=on y prioridad segun el rol"
     _help_intro "de la antena (PRIMARY=100, SECONDARY=50)."
 }
@@ -330,10 +322,18 @@ help_switch() {
 
 help_passwd() {
     _help_title "wifi passwd -- cambiar PSK de un perfil"
-    _help_usage "sudo wifi passwd <profile>"
+    _help_usage "sudo wifi passwd <profile|ssid> [--pass P]"
     printf '\n'
-    _help_intro "Pide la PSK nueva de forma interactiva. Tras aplicarla,"
-    _help_intro "reconecta el perfil."
+    _help_intro "Acepta el nombre exacto del perfil ('wifi-<iface>-<ssid>')"
+    _help_intro "o el SSID de la red; con el SSID se resuelve el primer"
+    _help_intro "perfil WiFi que lo declare."
+    _help_intro "Sin --pass pide la PSK nueva de forma interactiva."
+    printf '\n'
+    _help_intro "La PSK admite espacios al inicio y al final: se preservan"
+    _help_intro "tal cual se escriben (no se recortan)."
+    printf '\n'
+    _help_intro "Tras aplicarla, reconecta el perfil y muestra la salida"
+    _help_intro "real de nmcli (conecta o la causa del fallo)."
     _help_note "para ver perfiles disponibles: wifi networks"
 }
 
@@ -455,6 +455,24 @@ help_panic() {
     _help_intro "antenas WiFi conocidas."
     _help_warn "corta la red brevemente. Si tu acceso es remoto y no hay otra"
     _help_warn "antena activa, podes perder la sesion SSH."
+}
+
+help_fallback() {
+    _help_title "wifi fallback -- alterna a iwd como gestor WiFi"
+    _help_usage "sudo wifi fallback <on|off|status>"
+    printf '\n'
+    _help_intro "Backbone normal: NetworkManager. Fallback: iwd."
+    _help_intro "iwd queda instalado y disabled en el flujo normal; este"
+    _help_intro "comando lo pone al mando o devuelve el control a NM."
+    printf '\n'
+    _help_cmd "  " "on"     "para + enmascara NM, arranca iwd"
+    _help_cmd "  " "off"    "para iwd, desenmascara + arranca NM"
+    _help_cmd "  " "status" "quien esta al mando ahora"
+    printf '\n'
+    _help_intro "El comando guarda el estado previo de NM e iwd antes de"
+    _help_intro "tocar nada; 'off' restaura el estado original."
+    _help_note "conecta con iwd: iwctl station <iface> connect <ssid>"
+    _help_note "scan con iwd:   iwctl station <iface> scan"
 }
 
 help_install() {
