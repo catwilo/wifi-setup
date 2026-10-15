@@ -94,9 +94,13 @@ fallback_status() {
 
     if [[ -f "${FALLBACK_STATE}" ]]; then
         info "state previo guardado en ${FALLBACK_STATE}:"
-        while IFS= read -r _line; do
-            printf '    %s\n' "${_line}"
-        done < "${FALLBACK_STATE}"
+        if [[ -r "${FALLBACK_STATE}" ]]; then
+            while IFS= read -r _line; do
+                printf '    %s\n' "${_line}"
+            done < "${FALLBACK_STATE}"
+        else
+            printf '    (ilegible sin root -- corre: sudo cat %s)\n' "${FALLBACK_STATE}"
+        fi
     fi
 }
 
