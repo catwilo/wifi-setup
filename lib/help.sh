@@ -179,7 +179,6 @@ help_index() {
     _help_cmd "  " "sudo wifi doctor --fix"        "aplica fixes seguros"
 
     _help_cat EMERG "EMERGENCIA"
-    _help_cat FALLBACK "FALLBACK (iwd vs NetworkManager)"
     _help_cmd "  " "sudo wifi panic"               "reinicia NM, reconecta antenas"
 
     _help_cat EMERG "FALLBACK (iwd vs NetworkManager)"
@@ -201,19 +200,23 @@ help_index() {
 # ---------------------------------------------------------------------------
 
 help_status() {
-    _help_title "wifi status -- estado del stack"
+    _help_title "wifi status -- estado general de la red"
     _help_usage "wifi status"
     printf '\n'
-    _help_intro "Reporte de lectura. No requiere root. Recorre:"
-    printf '  %sNM%s  estado del servicio NetworkManager\n' "${H_KEY}" "${H_RESET}"
-    printf '  %sAntenas%s  tabla de wifi-setup radio list\n' "${H_KEY}" "${H_RESET}"
-    printf '  %sDevices NM%s  todos los devices conocidos por NM\n' "${H_KEY}" "${H_RESET}"
-    printf '  %sConexiones%s  perfiles y autoconnect\n' "${H_KEY}" "${H_RESET}"
-    printf '  %sLAN%s  estado del cable ethernet\n' "${H_KEY}" "${H_RESET}"
-    printf '  %sVPN%s  estado de Tailscale\n' "${H_KEY}" "${H_RESET}"
-    printf '  %sInternet%s  ping a 1.1.1.1\n' "${H_KEY}" "${H_RESET}"
+    _help_intro "Reporte de lectura. No requiere root. Funciona con NM o con"
+    _help_intro "iwd como gestor activo (modo fallback)."
     printf '\n'
-    _help_note "para detalle por area: wifi radio list, wifi lan status, wifi vpn status"
+    _help_intro "Secciones:"
+    printf '  %sGestor%s     NM o iwd activo (o ninguno)\n' "${H_KEY}" "${H_RESET}"
+    printf '  %sInterfaces%s estado e IP por iface (kernel)\n' "${H_KEY}" "${H_RESET}"
+    printf '  %sRuta%s       ruta por defecto actual\n' "${H_KEY}" "${H_RESET}"
+    printf '  %sAntenas%s    antenas WiFi detectadas en /sys (kernel)\n' "${H_KEY}" "${H_RESET}"
+    printf '  %sConexiones%s devices/conexiones del gestor activo\n' "${H_KEY}" "${H_RESET}"
+    printf '  %sLAN%s        estado del perfil LAN (solo con NM)\n' "${H_KEY}" "${H_RESET}"
+    printf '  %sVPN%s        estado de Tailscale\n' "${H_KEY}" "${H_RESET}"
+    printf '  %sInternet%s   ping a 1.1.1.1\n' "${H_KEY}" "${H_RESET}"
+    printf '\n'
+    _help_note "para detalle por area: wifi ifaces, wifi radio list, wifi fallback status"
 }
 
 help_ifaces() {

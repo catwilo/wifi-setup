@@ -111,37 +111,76 @@ _cmd_status() {
     _maybe_help status "$@"
 
     _load nm radio
-    require_root
+    # status es lectura: funciona con NM o con iwd (fallback), sin root.
 
-    section "NetworkManager"
+    section "Gestor WiFi"
+    local _mgr="ninguno"
     if systemctl is-active NetworkManager >/dev/null 2>&1; then
-        ok "activo"
+        _mgr="NetworkManager"
+        ok "NetworkManager activo (backbone)"
+    elif systemctl is-active iwd >/dev/null 2>&1; then
+        _mgr="iwd"
+        ok "iwd activo (fallback)"
     else
-        warn "inactivo"
+        warn "sin gestor WiFi activo (NM e iwd parados)"
+    fi
+
+    section "Interfaces"
+    ip -br addr 2>/dev/null || warn "ip no disponible"
+
+    section "Ruta default"
+    local _routes
+    _routes="$(ip route show default 2>/dev/null || true)"
+    if [ -n "$_routes" ]; then
+        printf '%s\n' "$_routes"
+    else
+        warn "sin ruta default (posible corte de red)"
     fi
 
     section "Antenas WiFi"
-    radio_list
+    local _p _if _state _ip _found=0
+    for _p in /sys/class/net/*/wireless; do
+        [ -d "$_p" ] || continue
+        _found=1
+        _if="${_p%/wireless}"; _if="${_if##*/}"
+        _state="$(cat "/sys/class/net/$_if/operstate" 2>/dev/null || echo "?")"
+        _ip="$(ip -4 -o addr show "$_if" 2>/dev/null | awk '{print $4}' | head -1)"
+        printf '  %-12s %-10s %s\n' "$_if" "$_state" "${_ip:--}"
+    done
+    [ "$_found" -eq 1 ] || warn "no se detectaron antenas WiFi en el kernel"
 
-    section "Devices NM"
-    nm_dev_list
+    if [ "$_mgr" = "NetworkManager" ]; then
+        section "Devices NM"
+        nm_dev_list 2>&1 || warn "nmcli no respondio"
 
-    section "Conexiones"
-    nm_summary
+        section "Conexiones NM"
+        nm_summary 2>&1 || warn "nm_summary fallo"
+    elif [ "$_mgr" = "iwd" ]; then
+        section "Stations iwd"
+        if command -v iwctl >/dev/null 2>&1; then
+            iwctl station list 2>&1 || warn "iwctl fallo"
+        else
+            warn "iwctl no disponible"
+        fi
+    fi
 
     section "LAN"
     source "${LIB_DIR}/lan.sh"
-    lan_status
+    if [ "$_mgr" = "NetworkManager" ]; then
+        lan_status 2>&1 || true
+    else
+        echo "  (perfil LAN gestionado por NM -- no aplica con $_mgr)"
+    fi
 
     section "VPN"
     source "${LIB_DIR}/vpn.sh"
-    vpn_status 2>/dev/null | head -5 || echo "  (no disponible)"
+    vpn_status 2>&1 || true
 
     section "Internet"
     if ping -c1 -W2 1.1.1.1 >/dev/null 2>&1; then
-        ok "OK"
+        ok "OK (ping 1.1.1.1)"
     else
-        warn "sin conectividad"
+        warn "sin conectividad a 1.1.1.1"
     fi
 }
 
@@ -265,16 +304,7 @@ _add_pick_ssid() {
         warn "no hay escaneo previo -- corre 'wifi scan' para el picker fzf"
         return 0
     fi
-    # La cache guarda los SSID entre comillas dobles (para que se vean
-    # los espacios al inicio/fin). Al elegir uno, se despojan las
-    # comillas: el valor que sale hacia 'wifi add' es el SSID real.
-    local choice
-    choice="$(fzf --prompt='SSID> ' --height=40% < "${cache}")" || return 0
-    if [[ "${choice}" == \"*\" ]]; then
-        choice="${choice#\"}"
-        choice="${choice%\"}"
-    fi
-    printf '%s\n' "${choice}"
+    fzf --prompt='SSID> ' --height=40% < "${cache}"
 }
 
 # ---------------------------------------------------------------------------
