@@ -87,7 +87,7 @@ _scan_nmcli_names() {
         [[ -n "${line}" ]] || continue
         [[ -n "${seen[${line}]:-}" ]] && continue
         seen["${line}"]=1
-        printf '%s\n' "${line}"
+        printf '"%s"\n' "${line}"
     done <<< "${raw}"
 }
 
@@ -144,7 +144,7 @@ _scan_persist_ssids() {
         [[ -n "${line}" ]] || continue
         [[ -n "${seen[${line}]:-}" ]] && continue
         seen["${line}"]=1
-        printf '%s\n' "${line}"
+        printf '"%s"\n' "${line}"
     done <<< "${raw}" > "${tmp}"
     mv "${tmp}" "${cache}"
     chmod 600 "${cache}"

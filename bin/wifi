@@ -265,7 +265,16 @@ _add_pick_ssid() {
         warn "no hay escaneo previo -- corre 'wifi scan' para el picker fzf"
         return 0
     fi
-    fzf --prompt='SSID> ' --height=40% < "${cache}"
+    # La cache guarda los SSID entre comillas dobles (para que se vean
+    # los espacios al inicio/fin). Al elegir uno, se despojan las
+    # comillas: el valor que sale hacia 'wifi add' es el SSID real.
+    local choice
+    choice="$(fzf --prompt='SSID> ' --height=40% < "${cache}")" || return 0
+    if [[ "${choice}" == \"*\" ]]; then
+        choice="${choice#\"}"
+        choice="${choice%\"}"
+    fi
+    printf '%s\n' "${choice}"
 }
 
 # ---------------------------------------------------------------------------
