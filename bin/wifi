@@ -212,6 +212,7 @@ _cmd_radio() {
     [[ -n "${sub}" ]] || _die "uso: wifi radio <list|primary|secondary|use|clear-session|up|down> [args]"
 
     _load nm radio
+    nm_require
     require_root
 
     case "${sub}" in
@@ -233,6 +234,7 @@ _cmd_add() {
     _maybe_help add "$@"
 
     _load nm radio
+    nm_require
     require_root
 
     local ssid="" iface="" pass=""
@@ -320,6 +322,7 @@ _cmd_networks() {
     shift || true
 
     _load nm radio networks
+    nm_require
     require_root
 
     case "${sub}" in
@@ -337,6 +340,7 @@ _cmd_switch() {
     _maybe_help switch "$@"
 
     _load nm radio
+    nm_require
     require_root
 
     local ssid="${1:-}" iface="${2:-}"
@@ -361,6 +365,7 @@ _cmd_passwd() {
     _maybe_help passwd "$@"
 
     _load nm
+    nm_require
     require_root
 
     local target="" pass=""
@@ -436,6 +441,7 @@ _cmd_showpass() {
     _maybe_help showpass "$@"
 
     _load nm
+    nm_require
     require_root
 
     local profile="${1:-}"
@@ -460,6 +466,7 @@ _cmd_setmac() {
     _maybe_help setmac "$@"
 
     _load nm
+    nm_require
     require_root
 
     local profile="${1:-}" mac="${2:-}"
@@ -482,6 +489,7 @@ _cmd_showmac() {
     _maybe_help showmac "$@"
 
     _load nm
+    nm_require
     require_root
 
     local profile="${1:-}"
@@ -504,6 +512,7 @@ _cmd_autoconnect() {
     _maybe_help autoconnect "$@"
 
     _load nm
+    nm_require
     require_root
 
     local profile="${1:-}" mode="${2:-}"
@@ -520,6 +529,7 @@ _cmd_panic() {
     _maybe_help panic "$@"
 
     _load nm
+    nm_require
     require_root
 
     warn "PANIC: reiniciando NetworkManager..."
@@ -548,6 +558,7 @@ _cmd_monitor() {
     shift || true
 
     _load nm radio monitor
+    nm_require
     require_root
 
     case "${sub}" in
@@ -587,6 +598,7 @@ _cmd_lan() {
     shift || true
 
     _load nm lan
+    nm_require
     require_root
 
     case "${sub}" in
@@ -661,6 +673,7 @@ _cmd_vpn() {
 _cmd_scan() {
     _maybe_help scan "$@"
     _load nm radio scan
+    nm_require
     require_root
     scan_run "$@"
 }

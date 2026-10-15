@@ -18,8 +18,16 @@
 nm_require() {
     command -v nmcli >/dev/null 2>&1 \
         || die "NetworkManager no instalado -- corre: sudo wifi install"
-    systemctl is-active NetworkManager >/dev/null 2>&1 \
-        || die "NetworkManager no activo -- corre: sudo systemctl start NetworkManager"
+    if systemctl is-active NetworkManager >/dev/null 2>&1; then
+        return 0
+    fi
+    # Diferenciar fallback (iwd al mando) de NM simplemente parado.
+    # iwd es fallback manual fuera del alcance de wifi-setup: el usuario
+    # decide si volver a NM o manejar iwd a mano con iwctl.
+    if systemctl is-active iwd >/dev/null 2>&1; then
+        die "NetworkManager no activo: modo fallback con iwd al mando. Vuelve a NM con: wifi fallback off"
+    fi
+    die "NetworkManager no activo -- corre: sudo systemctl start NetworkManager"
 }
 
 # ---------------------------------------------------------------------------
