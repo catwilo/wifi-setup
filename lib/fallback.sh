@@ -171,6 +171,21 @@ fallback_off() {
     fi
     ok "NetworkManager activo -- backbone restaurado"
 
+    # Reset de las antenas WiFi: al parar iwd las interfaces quedan en un
+    # estado que NM no re-descubre (no dispara evento de re-deteccion).
+    # ip link down/up fuerza un evento netlink que NM ve, y devuelve la
+    # interfaz a managed. Sin esto, nmcli dev status no lista las antenas
+    # hasta un reboot o un re-escaneo manual.
+    local _w _if
+    for _w in /sys/class/net/*/wireless; do
+        [ -d "${_w}" ] || continue
+        _if="${_w%/wireless}"; _if="${_if##*/}"
+        info "reseteando ${_if} para que NM la redescubra..."
+        ip link set "${_if}" down 2>/dev/null || true
+        ip link set "${_if}" up   2>/dev/null || true
+        nmcli dev set "${_if}" managed yes 2>/dev/null || true
+    done
+
     _fallback_wait_ip 30 || true
 
     rm -f "${FALLBACK_STATE}"
