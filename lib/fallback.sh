@@ -47,10 +47,11 @@ _fallback_ensure_iwd_netconf() {
     #     el resultado es "espera y espera sin IP".
     #   [Network] NameResolvingService=none  -> iwd no toca resolv.conf.
     #     En este equipo Tailscale es quien lo maneja.
-    #   [DriverQuirks] DefaultInterface=false  -> iwd NO destruye la
-    #     iface al pararse (reemplaza al deprecated UseDefaultInterface).
-    #     Sin esto, 'systemctl stop iwd' borra wlan0 del kernel y NM no
-    #     la ve hasta recargar el driver.
+    #   [DriverQuirks] DefaultInterface=?*  -> iwd NO destruye la iface
+    #     al pararse. ?* es un glob que matchea cualquier driver
+    #     (ath9k, mt76, rtl...). Reemplaza al deprecated
+    #     [General] UseDefaultInterface=true. Sin esto, 'stop iwd' borra
+    #     wlan0 del kernel y NM no la ve hasta recargar el driver.
     local need_netconf=0 need_resolv=0 need_iface=0
     if [[ ! -s "${conf}" ]] \
        || ! grep -qE '^[[:space:]]*EnableNetworkConfiguration[[:space:]]*=[[:space:]]*true' "${conf}"; then
@@ -61,7 +62,7 @@ _fallback_ensure_iwd_netconf() {
         need_resolv=1
     fi
     if [[ ! -s "${conf}" ]] \
-       || ! grep -qE '^[[:space:]]*DefaultInterface[[:space:]]*=' "${conf}"; then
+       || ! grep -qE '^[[:space:]]*DefaultInterface[[:space:]]*=[[:space:]]*\?\*' "${conf}"; then
         need_iface=1
     fi
 
@@ -84,13 +85,13 @@ _fallback_ensure_iwd_netconf() {
         fi
         if [[ "${need_iface}" -eq 1 ]]; then
             printf '\n[DriverQuirks]\n'
-            printf 'DefaultInterface=false\n'
+            printf 'DefaultInterface=?*\n'
         fi
     } >> "${conf}"
 
     [[ "${need_netconf}" -eq 1 ]] && ok "iwd: DHCP integrado habilitado en ${conf}"
     [[ "${need_resolv}" -eq 1 ]] && ok "iwd: NameResolvingService=none (Tailscale maneja DNS)"
-    [[ "${need_iface}"  -eq 1 ]] && ok "iwd: DriverQuirks.DefaultInterface=false (no destruye la antena)"
+    [[ "${need_iface}"  -eq 1 ]] && ok "iwd: DriverQuirks.DefaultInterface=?* (no destruye la antena)"
     return 0
 }
 
