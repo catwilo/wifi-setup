@@ -278,3 +278,87 @@ networks_list() {
             "${ssid}" "${iface}" "${auto}" "${prio}" "${exists}"
     done < <(_networks_store_rows)
 }
+
+# ---------------------------------------------------------------------------
+# iwd -- SOLO LECTURA. wifi-setup no gestiona iwd: el usuario lo maneja
+# manual con iwctl. Pero cuando iwd conoce una red que la DB no tiene, se
+# importa a la DB para que al volver a NM exista el perfil equivalente con
+# la misma PSK. iwd nunca se modifica desde aca.
+# ---------------------------------------------------------------------------
+
+# Directorio del store de iwd. Override por env para tests.
+IWD_DIR="${IWD_DIR:-/var/lib/iwd}"
+
+# _iwd_ssid_from_filename <basename> -- reconstruye el SSID desde el nombre
+# del archivo .psk. iwd escapa no-printables como \xHH; printf %b los
+# decodifica. '_' (escape de '/') se deja como esta -- SSIDs reales con
+# '/' son virtualmente inexistentes.
+_iwd_ssid_from_filename() {
+    local base="$1"
+    base="${base%.psk}"
+    printf '%b' "${base}"
+}
+
+# _iwd_psk_for_ssid <ssid> -- Passphrase del .psk, o vacio si no existe.
+_iwd_psk_for_ssid() {
+    local ssid="$1" f
+    f="${IWD_DIR}/${ssid}.psk"
+    [[ -r "$f" ]] || return 1
+    sed -n 's/^Passphrase=//p' "$f"
+}
+
+# networks_import_from_iwd -- agrega a la DB las redes que iwd conoce y la
+# DB no tiene. Aditivo: nunca borra ni reemplaza PSK existentes. Crea una
+# fila por (ssid, iface) para cada antena WiFi presente.
+networks_import_from_iwd() {
+    local iwd_dir="${IWD_DIR}"
+    [[ -d "$iwd_dir" ]] || {
+        info "networks: iwd no tiene store (${iwd_dir} ausente)"
+        return 0
+    }
+
+    _networks_store_init
+    local ts; ts="$(date +%s)"
+
+    # SSIDs ya en la DB (no tocar).
+    declare -A in_db=()
+    local line _s _p _i _r
+    while IFS= read -r line; do
+        IFS=$'\t' read -r _s _p _i _r <<< "${line}"
+        [[ -n "${_s}" ]] && in_db["${_s}"]=1
+    done < <(_networks_store_rows)
+
+    # Antenas WiFi presentes.
+    local -a ifaces=()
+    local _if
+    while IFS= read -r _if; do
+        [[ -n "${_if}" ]] && ifaces+=("${_if}")
+    done < <(radio_ifaces)
+    if [[ "${#ifaces[@]}" -eq 0 ]]; then
+        warn "networks: no hay antenas WiFi -- import desde iwd omitido"
+        return 0
+    fi
+
+    local f ssid psk added=0
+    for f in "$iwd_dir"/*.psk; do
+        [[ -e "$f" ]] || continue
+        ssid="$(_iwd_ssid_from_filename "$(basename "$f")")"
+        [[ -n "${ssid}" ]] || continue
+        [[ -n "${in_db[${ssid}]:-}" ]] && continue
+        psk="$(_iwd_psk_for_ssid "${ssid}" || true)"
+
+        for _if in "${ifaces[@]}"; do
+            printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+                "${ssid}" "${psk}" "${_if}" "yes" "0" "${ts}" \
+                >> "${NETWORKS_STORE}"
+            added=$((added + 1))
+        done
+        in_db["${ssid}"]=1
+    done
+
+    if [[ "${added}" -gt 0 ]]; then
+        ok "networks: ${added} fila(s) importadas desde iwd"
+    else
+        info "networks: iwd no tiene redes nuevas para importar"
+    fi
+}

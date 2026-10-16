@@ -157,6 +157,17 @@ fallback_off() {
     fi
 
     section "Volviendo a NetworkManager (backbone)"
+
+    # Importar antes de parar iwd: las redes que el usuario conocio via
+    # iwctl viven en /var/lib/iwd/*.psk. Se agregan a la DB ahora (solo
+    # lee archivos + escribe TSV, no usa NM). Los perfiles NM se crean
+    # despues de arrancar NM (networks_sync usa nmcli, que necesita NM
+    # corriendo).
+    if command -v iwctl >/dev/null 2>&1; then
+        info "importando redes conocidas por iwd a la DB..."
+        networks_import_from_iwd
+    fi
+
     info "parando iwd..."
     systemctl stop iwd 2>/dev/null || true
     info "deshabilitando iwd..."
@@ -174,6 +185,14 @@ fallback_off() {
         return 1
     fi
     ok "NetworkManager activo -- backbone restaurado"
+
+    # Ahora que NM corre, materializar los perfiles desde la DB (incluye
+    # los importados desde iwd). Idempotente: si el perfil ya esta y
+    # coincide, no lo toca.
+    if [[ -f "${STATE_DIR}/networks.tsv" ]]; then
+        info "sincronizando perfiles NM desde la DB..."
+        networks_sync || warn "networks_sync fallo -- NM arrancara sin los perfiles importados"
+    fi
 
     # Reset de las antenas WiFi: al parar iwd las interfaces quedan en un
     # estado que NM no re-descubre (no dispara evento de re-deteccion).

@@ -322,14 +322,21 @@ _cmd_networks() {
     shift || true
 
     _load nm radio networks
-    nm_require
     require_root
 
+    # import-iwd funciona con NM parado (ese es el caso real: estas en
+    # fallback con iwd al mando). El resto de subcomandos si tocan nmcli.
     case "${sub}" in
-        list|"") networks_list ;;
-        merge)   networks_merge ;;
-        sync)    networks_sync ;;
-        *) _die "uso: wifi networks <list|merge|sync>" ;;
+        import-iwd) networks_import_from_iwd ;;
+        *)
+            nm_require
+            case "${sub}" in
+                list|"") networks_list ;;
+                merge)   networks_merge ;;
+                sync)    networks_sync ;;
+                *) _die "uso: wifi networks <list|merge|sync|import-iwd>" ;;
+            esac
+            ;;
     esac
 }
 
