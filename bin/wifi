@@ -321,15 +321,26 @@ _cmd_add() {
     fi
     [[ "${#pass}" -ge 8 ]] || _die "PSK minimo 8 caracteres"
 
+    # SECONDARY apagada por defecto: su perfil se guarda con
+    # autoconnect=off. Al arrancar NM, la antena queda arriba pero sin
+    # conectar nada -- el usuario decide cuando usarla (scan, monitor,
+    # conectar a una red concreta). La PRIMARY siempre autoconnect=on.
+    local auto="yes"
+    _radio_load_state
+    if [[ -n "${RADIO_SECONDARY}" && "${iface}" == "${RADIO_SECONDARY}" ]]; then
+        auto="off"
+    fi
+
     # 1) DB primero: la DB es la fuente de verdad.
-    _networks_store_upsert "${ssid}" "${pass}" "${iface}" "yes" "0"
+    _networks_store_upsert "${ssid}" "${pass}" "${iface}" "${auto}" "0"
 
     # 2) Propagar a los backends. networks_apply hace sync en NM (si
     #    corre) e iwd (siempre escribe el .psk). Idempotente.
     _load networks
     networks_apply
 
-    ok "red '${ssid}' agregada en ${iface} (DB + NM + iwd)"
+    ok "red '${ssid}' agregada en ${iface} (DB + NM + iwd, autoconnect=${auto})"
+    [[ "${auto}" = "off" ]] && info "${iface} es SECONDARY -- autoconnect=off (enciende con: wifi radio up ${iface})"
 
     # 3) Si NM corre, intentar conectar y reportar. Si no, la red queda
     #    guardada para cuando lo arranques.
