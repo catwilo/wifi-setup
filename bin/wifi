@@ -12,6 +12,16 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
+# WIFI_LOG_FILE=<path> duplica stdout+stderr al archivo indicado, sin
+# censurar nada: la salida sigue yendo al terminal (tee). Util cuando
+# el comando corre bajo sudo y otra herramienta (nya) necesita leer la
+# salida completa sin depender de un TTY interactivo:
+#   sudo WIFI_LOG_FILE=/tmp/wifi-debug.log wifi fallback off
+#   cat /tmp/wifi-debug.log     # o sudo cat si lo escribio root
+if [[ -n "${WIFI_LOG_FILE:-}" ]]; then
+    exec > >(tee -a "${WIFI_LOG_FILE}") 2>&1
+fi
+
 # Resolver el symlink: /usr/local/bin/wifi apunta al repo. Sin esto,
 # _SELF_DIR seria /usr/local/bin y LIB_DIR /usr/local/lib (no existe).
 _SELF="${BASH_SOURCE[0]}"
