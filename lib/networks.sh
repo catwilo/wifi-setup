@@ -209,9 +209,9 @@ networks_sync() {
         if nm_con_exists "${profile}"; then
             local cur_ssid cur_iface cur_psk cur_auto
             cur_ssid="$(nmcli -t -g 802-11-wireless.ssid con show "${profile}" 2>/dev/null || true)"
-            cur_iface="$(nm_con_get "${profile}" connection.interface-name)"
+            cur_iface="$(nm_con_get "${profile}" connection.interface-name || true)"
             cur_psk="$(nmcli -s -t -g 802-11-wireless-security.psk con show "${profile}" 2>/dev/null || true)"
-            cur_auto="$(nm_con_get "${profile}" connection.autoconnect)"
+            cur_auto="$(nm_con_get "${profile}" connection.autoconnect || true)"
 
             if [[ "${cur_ssid}" == "${ssid}" \
                   && "${cur_iface}" == "${iface}" \

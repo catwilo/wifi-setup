@@ -64,6 +64,16 @@ fi
 
 _die() { echo -e "${_R}error: $*${_X}" >&2; exit 1; }
 
+# Trap ERR: si bash muere por set -e, imprime linea + comando + rc antes
+# de salir. Sin esto, un fallo interno (por ejemplo un nmcli con rc != 0
+# dentro de $(...)) mata el script en silencio y el usuario no ve nada.
+_on_err() {
+    local _rc="$1" _line="$2" _cmd="$3"
+    printf '%s[ERR]%s   line %s: rc=%s: %s\n' \
+        "${_R}" "${_X}" "${_line}" "${_rc}" "${_cmd}" >&2
+}
+trap '_on_err "$?" "$LINENO" "$BASH_COMMAND"' ERR
+
 PROJECT_ROOT="$(cd "${_SELF_DIR}/.." && pwd)"
 LIB_DIR="${PROJECT_ROOT}/lib"
 SCRIPTS_DIR="${PROJECT_ROOT}"
