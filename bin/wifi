@@ -12,14 +12,32 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-# WIFI_LOG_FILE=<path> duplica stdout+stderr al archivo indicado, sin
-# censurar nada: la salida sigue yendo al terminal (tee). Util cuando
-# el comando corre bajo sudo y otra herramienta (nya) necesita leer la
-# salida completa sin depender de un TTY interactivo:
-#   sudo WIFI_LOG_FILE=/tmp/wifi-debug.log wifi fallback off
-#   cat /tmp/wifi-debug.log     # o sudo cat si lo escribio root
+# --log[=<path>] duplica stdout+stderr al archivo indicado, sin censurar
+# nada: la salida sigue yendo al terminal (tee).
+#   wifi --log fallback off         -> ${TMPDIR:-/tmp}/wifi-<ts>.log
+#   wifi --log=/tmp/w.log <cmd>     -> ruta explicita
+# WIFI_LOG_FILE=<path> en el entorno tambien vale (util bajo sudo, donde
+# argv cambia): sudo WIFI_LOG_FILE=/tmp/w.log wifi fallback off
+#
+# La ruta default usa ${TMPDIR:-/tmp}, que funciona en Termux (Android
+# sin root) y en Debian por igual. El archivo se abre con -a (append).
+_log_requested=0
+case "${1:-}" in
+    --log)    _log_requested=1; shift ;;
+    --log=*)  WIFI_LOG_FILE="${1#--log=}"; _log_requested=1; shift ;;
+esac
+if [[ "${_log_requested}" -eq 1 && -z "${WIFI_LOG_FILE:-}" ]]; then
+    WIFI_LOG_FILE="${TMPDIR:-/tmp}/wifi-$(date +%Y%m%d-%H%M%S).log"
+fi
+unset _log_requested
 if [[ -n "${WIFI_LOG_FILE:-}" ]]; then
+    # Crear con permisos legibles (644) de forma explicita: sin esto, el
+    # archivo hereda el umask del shell y en algunos entornos queda 600,
+    # ilegible desde otra sesion sin root. Log de debug -> legible.
+    : > "${WIFI_LOG_FILE}" 2>/dev/null || true
+    chmod 644 "${WIFI_LOG_FILE}" 2>/dev/null || true
     exec > >(tee -a "${WIFI_LOG_FILE}") 2>&1
+    printf '[INFO]  log: %s\n' "${WIFI_LOG_FILE}" >&2
 fi
 
 # Resolver el symlink: /usr/local/bin/wifi apunta al repo. Sin esto,
