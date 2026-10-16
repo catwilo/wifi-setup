@@ -141,6 +141,9 @@ help_index() {
     _help_cmd "  " "sudo wifi switch <ssid>"       "cambia al perfil guardado"
     _help_cmd "  " "sudo wifi passwd <ssid|perfil>" "cambia PSK + reconecta"
     _help_cmd "  " "sudo wifi showpass <profile>"  "muestra PSK"
+    _help_cmd "  " "sudo wifi rename <p> <p2>"      "renombra un perfil"
+    _help_cmd "  " "sudo wifi setpriority <p> <N>" "cambia prioridad de autoconnect"
+    _help_cmd "  " "sudo wifi delete <p>"          "borra un perfil"
     _help_cmd "  " "sudo wifi autoconnect <profile> <on|off>" "autoconnect manual"
 
     _help_cat MAC "MAC (clonado por perfil)"
@@ -358,6 +361,40 @@ help_showpass() {
     _help_intro "Muestra la PSK guardada en el perfil NM (requiere --show-secrets,"
     _help_intro "por eso root)."
     _help_warn "la salida contiene la clave en claro: no la pegues en logs compartidos."
+}
+
+help_rename() {
+    _help_title "wifi rename -- renombrar un perfil guardado"
+    _help_usage "sudo wifi rename <perfil-actual> <perfil-nuevo>"
+    printf '\n'
+    _help_intro "Cambia solo el nombre del perfil NM. UUID, PSK, MAC y"
+    _help_intro "prioridad se preservan intactos."
+    printf '\n'
+    _help_note "para listar perfiles: wifi networks"
+}
+
+help_setpriority() {
+    _help_title "wifi setpriority -- cambiar prioridad de un perfil"
+    _help_usage "sudo wifi setpriority <perfil|ssid> <N>"
+    printf '\n'
+    _help_intro "Mayor N = preferido. Cuando dos perfiles pueden conectar a"
+    _help_intro "la misma antena, NM elige el de prioridad mas alta."
+    _help_intro "Persistente: sobrevive reboot."
+    printf '\n'
+    _help_intro "Acepta el nombre del perfil ('wifi-<iface>-<ssid>') o el"
+    _help_intro "SSID de la red."
+    printf '\n'
+    _help_note "valores tipicos: 0 (default), 100 (alta), 50 (media)"
+}
+
+help_delete() {
+    _help_title "wifi delete -- borrar un perfil guardado"
+    _help_usage "sudo wifi delete <perfil|ssid>"
+    printf '\n'
+    _help_intro "Elimina el perfil NM y sus filas en la DB del store."
+    printf '\n'
+    _help_warn "irreversible: la PSK del perfil desaparece con el."
+    _help_note "para ver los perfiles: wifi networks"
 }
 
 help_setmac() {

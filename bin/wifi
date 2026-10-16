@@ -569,6 +569,110 @@ _cmd_showpass() {
 }
 
 # ---------------------------------------------------------------------------
+# rename <perfil-actual> <perfil-nuevo> -- renombra un perfil guardado.
+# Cambia solo el nombre; UUID, PSK, MAC y prioridad se preservan.
+# ---------------------------------------------------------------------------
+_cmd_rename() {
+    _maybe_help rename "$@"
+
+    _load nm networks
+    nm_require
+    require_root
+
+    local old="${1:-}" new="${2:-}"
+    [[ -n "${old}" && -n "${new}" ]] || _die "uso: wifi rename <perfil-actual> <perfil-nuevo>"
+
+    nm_con_exists "${old}" || _die "perfil '${old}' no existe"
+
+    if nm_con_exists "${new}"; then
+        _die "ya existe un perfil llamado '${new}'"
+    fi
+
+    nmcli con mod "${old}" connection.id "${new}" >/dev/null
+    ok "perfil renombrado: ${old} -> ${new}"
+
+    # Actualizar la DB si el perfil estaba registrado alli. El nombre del
+    # perfil es derivado (wifi-<iface>-<ssid>); no afecta la clave (ssid).
+    # Un rename no toca la DB, porque la DB indexa por ssid. Se informa
+    # al usuario por si esperaba un cambio de SSID.
+    info "la DB (ssid) no cambia -- solo cambia el nombre del perfil NM"
+    info "si querias cambiar el SSID de la red, usa: wifi add + wifi delete"
+}
+
+# ---------------------------------------------------------------------------
+# setpriority <perfil|ssid> <N> -- cambia la prioridad de autoconnect.
+# Mayor N = preferido. Persistente.
+# ---------------------------------------------------------------------------
+_cmd_setpriority() {
+    _maybe_help setpriority "$@"
+
+    _load nm networks
+    nm_require
+    require_root
+
+    local target="${1:-}" prio="${2:-}"
+    [[ -n "${target}" && -n "${prio}" ]] || _die "uso: wifi setpriority <perfil|ssid> <N>"
+    [[ "${prio}" =~ ^[0-9]+$ ]] || _die "prioridad debe ser un numero entero (0..999)"
+
+    local profile
+    profile="$(_passwd_resolve_profile "${target}")" \
+        || _die "no hay perfil para '${target}'"
+
+    nm_con_set_priority "${profile}" "${prio}"
+    ok "prioridad de '${profile}' = ${prio}"
+
+    # Actualizar la DB (todas las filas del SSID, si el perfil tiene SSID).
+    local ssid
+    ssid="$(nmcli -t -g 802-11-wireless.ssid con show "${profile}" 2>/dev/null | head -1 || true)"
+    if [[ -n "${ssid}" && -f "${NETWORKS_STORE}" ]]; then
+        local tmp; tmp="$(mktemp "${TMPDIR:-/tmp}/wifi-tsv.XXXXXX")"
+        grep '^#' "${NETWORKS_STORE}" > "${tmp}" || true
+        while IFS= read -r _line; do
+            local _s _p _i _a _pr _ts
+            IFS=$'\t' read -r _s _p _i _a _pr _ts <<< "${_line}"
+            if [[ "${_s}" == "${ssid}" ]]; then
+                printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+                    "${_s}" "${_p}" "${_i}" "${_a}" "${prio}" "$(date +%s)" >> "${tmp}"
+            else
+                printf '%s\n' "${_line}" >> "${tmp}"
+            fi
+        done < <(_networks_store_rows)
+        mv "${tmp}" "${NETWORKS_STORE}"
+        chmod 600 "${NETWORKS_STORE}"
+        info "DB actualizada (SSID '${ssid}')"
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# delete <perfil|ssid> -- borra un perfil guardado y su fila en la DB.
+# ---------------------------------------------------------------------------
+_cmd_delete() {
+    _maybe_help delete "$@"
+
+    _load nm networks
+    nm_require
+    require_root
+
+    local target="${1:-}"
+    [[ -n "${target}" ]] || _die "uso: wifi delete <perfil|ssid>"
+
+    local profile
+    profile="$(_passwd_resolve_profile "${target}")" \
+        || _die "no hay perfil para '${target}' -- usa: wifi networks"
+
+    local ssid
+    ssid="$(nmcli -t -g 802-11-wireless.ssid con show "${profile}" 2>/dev/null | head -1 || true)"
+
+    nm_con_delete "${profile}"
+    ok "perfil borrado: ${profile}"
+
+    if [[ -n "${ssid}" ]]; then
+        _networks_store_delete "${ssid}"
+        info "DB: filas del SSID '${ssid}' eliminadas"
+    fi
+}
+
+# ---------------------------------------------------------------------------
 # setmac <profile> <mac|random|stable|permanent>
 # ---------------------------------------------------------------------------
 _cmd_setmac() {
@@ -840,6 +944,9 @@ case "${CMD}" in
     switch)          _cmd_switch "$@" ;;
     passwd|password) _cmd_passwd "$@" ;;
     showpass)        _cmd_showpass "$@" ;;
+    rename)          _cmd_rename "$@" ;;
+    setpriority)     _cmd_setpriority "$@" ;;
+    delete)          _cmd_delete "$@" ;;
     setmac)          _cmd_setmac "$@" ;;
     showmac)         _cmd_showmac "$@" ;;
     autoconnect)     _cmd_autoconnect "$@" ;;
