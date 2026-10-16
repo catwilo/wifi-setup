@@ -175,31 +175,35 @@ _cmd_status() {
         warn "sin ruta default (posible corte de red)"
     fi
 
-    section "Antenas WiFi"
-    local _p _if _state _ip _found=0
+    section "Antenas WiFi (red conectada por antena)"
+    local _p _if _found=0
+    printf '  %-10s %-10s %-24s %s\n' "IFACE" "ESTADO" "RED" "IP" >&2
     for _p in /sys/class/net/*/wireless; do
         [ -d "$_p" ] || continue
         _found=1
         _if="${_p%/wireless}"; _if="${_if##*/}"
-        _state="$(cat "/sys/class/net/$_if/operstate" 2>/dev/null || echo "?")"
-        _ip="$(ip -4 -o addr show "$_if" 2>/dev/null | awk '{print $4}' | head -1)"
-        printf '  %-12s %-10s %s\n' "$_if" "$_state" "${_ip:--}"
+        local _state _net _ip
+        _state="$(cat "/sys/class/net/${_if}/operstate" 2>/dev/null || echo "?")"
+        _ip="$(ip -4 -o addr show "${_if}" 2>/dev/null | awk '{print $4}' | head -1)"
+
+        # Red conectada segun el gestor activo. Lectura directa del
+        # backend, sin cache ni inferencia.
+        _net=""
+        if [ "${_mgr}" = "NetworkManager" ]; then
+            _net="$(nmcli -t -f DEVICE,CONNECTION dev status 2>/dev/null \
+                | awk -F: -v i="${_if}" '$1==i {print $2; exit}')"
+        elif [ "${_mgr}" = "iwd" ]; then
+            _net="$(iwctl station "${_if}" show 2>/dev/null \
+                | awk -F'  +' '/Connected network/ {print $3; exit}')"
+        fi
+        printf '  %-10s %-10s %-24s %s\n' \
+            "${_if}" "${_state}" "${_net:--}" "${_ip:--}" >&2
     done
-    [ "$_found" -eq 1 ] || warn "no se detectaron antenas WiFi en el kernel"
+    [ "${_found}" -eq 1 ] || warn "no se detectaron antenas WiFi en el kernel"
 
-    if [ "$_mgr" = "NetworkManager" ]; then
-        section "Devices NM"
-        nm_dev_list 2>&1 || warn "nmcli no respondio"
-
+    if [ "${_mgr}" = "NetworkManager" ]; then
         section "Conexiones NM"
         nm_summary 2>&1 || warn "nm_summary fallo"
-    elif [ "$_mgr" = "iwd" ]; then
-        section "Stations iwd"
-        if command -v iwctl >/dev/null 2>&1; then
-            iwctl station list 2>&1 || warn "iwctl fallo"
-        else
-            warn "iwctl no disponible"
-        fi
     fi
 
     section "LAN"
