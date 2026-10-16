@@ -328,12 +328,22 @@ networks_import_from_iwd() {
         [[ -n "${_s}" ]] && in_db["${_s}"]=1
     done < <(_networks_store_rows)
 
-    # Antenas WiFi presentes.
+    # Antenas WiFi presentes. Lectura directa del kernel (o del override
+    # IWD_IFACES_CMD, para tests). Esta funcion corre durante fallback_off
+    # ANTES de arrancar NM, asi que no puede depender de nmcli/radio_ifaces.
     local -a ifaces=()
-    local _if
-    while IFS= read -r _if; do
-        [[ -n "${_if}" ]] && ifaces+=("${_if}")
-    done < <(radio_ifaces)
+    local _w _if
+    if [[ -n "${IWD_IFACES_CMD:-}" ]]; then
+        while IFS= read -r _if; do
+            [[ -n "${_if}" ]] && ifaces+=("${_if}")
+        done < <(eval "${IWD_IFACES_CMD}")
+    else
+        for _w in /sys/class/net/*/wireless; do
+            [[ -d "${_w}" ]] || continue
+            _if="${_w%/wireless}"; _if="${_if##*/}"
+            [[ -n "${_if}" ]] && ifaces+=("${_if}")
+        done
+    fi
     if [[ "${#ifaces[@]}" -eq 0 ]]; then
         warn "networks: no hay antenas WiFi -- import desde iwd omitido"
         return 0

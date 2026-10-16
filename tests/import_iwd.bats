@@ -24,6 +24,7 @@ setup() {
     export -f nm_con_exists nm_con_get nm_con_set_autoconnect nm_con_set_priority radio_ifaces radio_is_iface 2>/dev/null || true
 
     export IWD_DIR="$BATS_TEST_TMPDIR/iwd"
+    export IWD_IFACES_CMD="printf 'wlan0\\n'"
     mkdir -p "$IWD_DIR"
 
     # STATE_DIR del modulo apunta a BASE_DIR (usar env override o tmp).
