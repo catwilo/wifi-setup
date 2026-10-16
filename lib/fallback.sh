@@ -40,16 +40,58 @@ _fallback_svc_snapshot() {
 _fallback_ensure_iwd_netconf() {
     local conf="/etc/iwd/main.conf"
     mkdir -p /etc/iwd
-    if [[ -s "${conf}" ]] && grep -qE '^[[:space:]]*EnableNetworkConfiguration[[:space:]]*=' "${conf}"; then
-        info "iwd: DHCP integrado ya declarado en ${conf}"
+
+    # Directivas necesarias para que iwd sea autonomo:
+    #   [General] EnableNetworkConfiguration=true  -> DHCP integrado de
+    #     iwd. NO usar dhcpcd en paralelo: pelean por la misma iface y
+    #     el resultado es "espera y espera sin IP".
+    #   [Network] NameResolvingService=none  -> iwd no toca resolv.conf.
+    #     En este equipo Tailscale es quien lo maneja.
+    #   [DriverQuirks] DefaultInterface=false  -> iwd NO destruye la
+    #     iface al pararse (reemplaza al deprecated UseDefaultInterface).
+    #     Sin esto, 'systemctl stop iwd' borra wlan0 del kernel y NM no
+    #     la ve hasta recargar el driver.
+    local need_netconf=0 need_resolv=0 need_iface=0
+    if [[ ! -s "${conf}" ]] \
+       || ! grep -qE '^[[:space:]]*EnableNetworkConfiguration[[:space:]]*=[[:space:]]*true' "${conf}"; then
+        need_netconf=1
+    fi
+    if [[ ! -s "${conf}" ]] \
+       || ! grep -qE '^[[:space:]]*NameResolvingService[[:space:]]*=' "${conf}"; then
+        need_resolv=1
+    fi
+    if [[ ! -s "${conf}" ]] \
+       || ! grep -qE '^[[:space:]]*DefaultInterface[[:space:]]*=' "${conf}"; then
+        need_iface=1
+    fi
+
+    if [[ "${need_netconf}" -eq 0 && "${need_resolv}" -eq 0 && "${need_iface}" -eq 0 ]]; then
+        info "iwd: main.conf ya tiene las directivas necesarias"
         return 0
     fi
-    if [[ -s "${conf}" ]]; then
-        printf '\n[General]\nEnableNetworkConfiguration=true\n' >> "${conf}"
-    else
-        printf '[General]\nEnableNetworkConfiguration=true\n' > "${conf}"
-    fi
-    ok "iwd: DHCP integrado habilitado en ${conf}"
+
+    local _sep=""
+    [[ -s "${conf}" ]] && _sep=$'\n'
+    {
+        printf '%s' "${_sep}"
+        if [[ "${need_netconf}" -eq 1 ]]; then
+            printf '[General]\n'
+            printf 'EnableNetworkConfiguration=true\n'
+        fi
+        if [[ "${need_resolv}" -eq 1 ]]; then
+            printf '\n[Network]\n'
+            printf 'NameResolvingService=none\n'
+        fi
+        if [[ "${need_iface}" -eq 1 ]]; then
+            printf '\n[DriverQuirks]\n'
+            printf 'DefaultInterface=false\n'
+        fi
+    } >> "${conf}"
+
+    [[ "${need_netconf}" -eq 1 ]] && ok "iwd: DHCP integrado habilitado en ${conf}"
+    [[ "${need_resolv}" -eq 1 ]] && ok "iwd: NameResolvingService=none (Tailscale maneja DNS)"
+    [[ "${need_iface}"  -eq 1 ]] && ok "iwd: DriverQuirks.DefaultInterface=false (no destruye la antena)"
+    return 0
 }
 
 # _fallback_wait_ip <timeout-s> -- espera a que alguna antena WiFi tenga IP.
@@ -226,20 +268,55 @@ fallback_off() {
 
     # Reset de las antenas WiFi: al parar iwd las interfaces quedan en un
     # estado que NM no re-descubre (no dispara evento de re-deteccion).
-    # ip link down/up fuerza un evento netlink que NM ve, y devuelve la
-    # interfaz a managed. Sin esto, nmcli dev status no lista las antenas
-    # hasta un reboot o un re-escaneo manual.
+    # SOLO 'up' + 'managed yes': 'ip link set down' rompe la USB (el bus
+    # USB se resetea y wlx1 desaparece de /sys). Con UseDefaultInterface
+    # / DefaultInterface=false en /etc/iwd/main.conf, ademas, iwd ya no
+    # destruye la iface al pararse, asi que basta con devolverla a NM.
     local _w _if
     for _w in /sys/class/net/*/wireless; do
         [ -d "${_w}" ] || continue
         _if="${_w%/wireless}"; _if="${_if##*/}"
-        info "reseteando ${_if} para que NM la redescubra..."
-        ip link set "${_if}" down 2>/dev/null || true
-        ip link set "${_if}" up   2>/dev/null || true
+        info "devolviendo ${_if} a NM..."
+        ip link set "${_if}" up 2>/dev/null || true
         nmcli dev set "${_if}" managed yes 2>/dev/null || true
     done
 
-    _fallback_wait_ip 30 || true
+    # Scan + tabla de intentos. Muestra: que redes ve NM ahora, y cada
+    # 2s por 20s, el estado de cada antena + a que red intenta conectar.
+    # Con eso el usuario ve en vivo si NM esta intentando y en que falla.
+    echo "" >&2
+    info "escaneando redes visibles (nmcli dev wifi list)..."
+    nmcli dev wifi list 2>&1 >&2 || warn "scan fallo (NM sin antenas?)"
+
+    echo "" >&2
+    info "siguiendo intentos de conexion (20s)..."
+    printf '  %-10s %-14s %-30s %s\n' "IFACE" "STATE" "CONN" "IP" >&2
+    local _t=0 _any_conn=0
+    while [[ "${_t}" -lt 20 ]]; do
+        _any_conn=0
+        for _w in /sys/class/net/*/wireless; do
+            [[ -d "${_w}" ]] || continue
+            _if="${_w%/wireless}"; _if="${_if##*/}"
+            local _st _cn _ip
+            _st="$(nmcli -t -f DEVICE,STATE dev status 2>/dev/null | awk -F: -v i="${_if}" '$1==i {print $2; exit}')"
+            _cn="$(nmcli -t -f DEVICE,CONNECTION dev status 2>/dev/null | awk -F: -v i="${_if}" '$1==i {print $2; exit}')"
+            _ip="$(ip -4 -o addr show "${_if}" 2>/dev/null | awk '{print $4}' | head -1)"
+            printf '  %-10s %-14s %-30s %s\n' "${_if}" "${_st:-?}" "${_cn:-—}" "${_ip:-—}" >&2
+            [[ -n "${_cn}" ]] && _any_conn=1
+            [[ -n "${_ip}" ]] && { ok "IP asignada: ${_if} ${_ip}"; _t=999; break; }
+        done
+        [[ "${_t}" -eq 999 ]] && break
+        sleep 2
+        _t=$((_t + 2))
+    done
+
+    if [[ "${_t}" -ne 999 ]]; then
+        echo "" >&2
+        warn "ninguna antena obtuvo IP en 20s"
+        echo "" >&2
+        info "ultimos 8 eventos de NetworkManager (causa del fallo):"
+        journalctl -u NetworkManager -n 8 --no-pager 2>&1 >&2 || true
+    fi
 
     rm -f "${FALLBACK_STATE}"
 }
