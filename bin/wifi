@@ -694,7 +694,11 @@ _cmd_fallback() {
     local sub="${1:-status}"
     shift || true
 
-    _load fallback
+    # fallback_off usa networks_import_from_iwd + networks_sync (viven en
+    # networks.sh) y esas funciones usan nmcli wrappers (nm.sh). Cargar
+    # ambos modulos aunque 'on'/'status' no los necesiten -- el costo es
+    # despreciable y evita "command not found".
+    _load nm radio networks fallback
     case "${sub}" in
         on)        require_root; fallback_on ;;
         off)       require_root; fallback_off ;;

@@ -316,6 +316,14 @@ networks_import_from_iwd() {
         info "networks: iwd no tiene store (${iwd_dir} ausente)"
         return 0
     }
+    # /var/lib/iwd es root-only: sin sudo el glob no matchea y el for no
+    # itera, lo que se ve como "no hay redes" (mentira). Diferenciar
+    # no-listable de vacio para no reportar exito falso.
+    if [[ ! -r "$iwd_dir" ]]; then
+        warn "networks: ${iwd_dir} no es legible sin root -- import omitido"
+        warn "           corre este comando con sudo: sudo wifi networks import-iwd"
+        return 1
+    fi
 
     _networks_store_init
     local ts; ts="$(date +%s)"
