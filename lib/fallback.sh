@@ -53,26 +53,43 @@ _fallback_ensure_iwd_netconf() {
 }
 
 # _fallback_wait_ip <timeout-s> -- espera a que alguna antena WiFi tenga IP.
-# Best-effort: no aborta si vence el timeout (iwd puede necesitar
-# 'iwctl station <iface> connect <ssid>' si no conoce la red).
+# Verboso: en cada ciclo imprime el estado de cada antena (ip link state,
+# nmcli dev status, a que red intenta conectar y si esta activa). Best-effort:
+# no aborta si vence el timeout.
 _fallback_wait_ip() {
     local timeout="${1:-30}" waited=0 ip w
     info "esperando IP en alguna antena WiFi (max ${timeout}s)..."
+    printf '  %-10s %-12s %-16s %s\n' "IFACE" "STATE" "CONN" "IP" >&2
     while [[ "${waited}" -lt "${timeout}" ]]; do
         for w in /sys/class/net/*/wireless; do
             [[ -d "${w}" ]] || continue
             w="${w%/wireless}"; w="${w##*/}"
+            local state conn
+            state="$(nmcli -t -f DEVICE,STATE dev status 2>/dev/null \
+                | awk -F: -v i="${w}" '$1==i {print $2; exit}')"
+            conn="$(nmcli -t -f DEVICE,CONNECTION dev status 2>/dev/null \
+                | awk -F: -v i="${w}" '$1==i {print $2; exit}')"
             ip="$(ip -4 -o addr show "${w}" 2>/dev/null | awk '{print $4}' | head -1)"
+            printf '  %-10s %-12s %-16s %s\n' \
+                "${w}" "${state:-?}" "${conn:-—}" "${ip:-—}" >&2
             if [[ -n "${ip}" ]]; then
                 ok "IP asignada: ${w} ${ip}"
                 return 0
             fi
         done
-        sleep 2
-        waited=$((waited + 2))
+        sleep 3
+        waited=$((waited + 3))
     done
     warn "ninguna antena obtuvo IP en ${timeout}s"
-    warn "si iwd no conoce la red: iwctl station <iface> connect <ssid>"
+
+    # Diagnostico final: que perfiles existen, cuales estan activos, y
+    # que dice NM sobre intentos fallidos.
+    echo "" >&2
+    info "perfiles NM conocidos:"
+    nmcli -t -f NAME,TYPE con show 2>&1 | grep '802-11-wireless' >&2 || true
+    echo "" >&2
+    info "intentos fallidos (ultimos 5):"
+    nmcli -f GENERAL.STATE,GENERAL.CONNECTION dev show 2>&1 | grep -E 'GENERAL\.' >&2 || true
     return 1
 }
 
@@ -192,6 +209,19 @@ fallback_off() {
     if [[ -f "${STATE_DIR}/networks.tsv" ]]; then
         info "sincronizando perfiles NM desde la DB..."
         networks_sync || warn "networks_sync fallo -- NM arrancara sin los perfiles importados"
+    fi
+
+    echo "" >&2
+    info "devices en NM tras sync:"
+    nmcli dev status 2>&1 >&2 || true
+    echo "" >&2
+    info "conexiones activas ahora:"
+    local _act
+    _act="$(nmcli -t -f NAME,DEVICE,TYPE con show --active 2>&1 || true)"
+    if [[ -n "${_act}" ]]; then
+        printf '%s\n' "${_act}" >&2
+    else
+        printf '  (ninguna)\n' >&2
     fi
 
     # Reset de las antenas WiFi: al parar iwd las interfaces quedan en un

@@ -162,6 +162,10 @@ Cada subcomando acepta `-h`/`--help` para su ayuda detallada:
     sudo wifi doctor             reporte del stack (read-only)
     sudo wifi doctor --fix       aplica fixes seguros automaticamente
 
+## Manuales
+
+docs/nmcli-manual.md   repertorio nmcli para operar a mano cuando `wifi` no alcanza
+
 ## Arquitectura
 
 Ver `ARCHITECTURE.md` para el mapa de modulos y las decisiones de diseno.
