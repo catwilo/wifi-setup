@@ -41,57 +41,37 @@ _fallback_ensure_iwd_netconf() {
     local conf="/etc/iwd/main.conf"
     mkdir -p /etc/iwd
 
-    # Directivas necesarias para que iwd sea autonomo:
-    #   [General] EnableNetworkConfiguration=true  -> DHCP integrado de
-    #     iwd. NO usar dhcpcd en paralelo: pelean por la misma iface y
-    #     el resultado es "espera y espera sin IP".
-    #   [Network] NameResolvingService=none  -> iwd no toca resolv.conf.
-    #     En este equipo Tailscale es quien lo maneja.
-    #   [DriverQuirks] DefaultInterface=?*  -> iwd NO destruye la iface
-    #     al pararse. ?* es un glob que matchea cualquier driver
-    #     (ath9k, mt76, rtl...). Reemplaza al deprecated
-    #     [General] UseDefaultInterface=true. Sin esto, 'stop iwd' borra
-    #     wlan0 del kernel y NM no la ve hasta recargar el driver.
-    local need_netconf=0 need_resolv=0 need_iface=0
-    if [[ ! -s "${conf}" ]] \
-       || ! grep -qE '^[[:space:]]*EnableNetworkConfiguration[[:space:]]*=[[:space:]]*true' "${conf}"; then
-        need_netconf=1
-    fi
-    if [[ ! -s "${conf}" ]] \
-       || ! grep -qE '^[[:space:]]*NameResolvingService[[:space:]]*=' "${conf}"; then
-        need_resolv=1
-    fi
-    if [[ ! -s "${conf}" ]] \
-       || ! grep -qE '^[[:space:]]*DefaultInterface[[:space:]]*=[[:space:]]*\?\*' "${conf}"; then
-        need_iface=1
-    fi
-
-    if [[ "${need_netconf}" -eq 0 && "${need_resolv}" -eq 0 && "${need_iface}" -eq 0 ]]; then
-        info "iwd: main.conf ya tiene las directivas necesarias"
-        return 0
+    # Directivas que iwd necesita para ser autonomo:
+    #   [General]      EnableNetworkConfiguration=true  -> DHCP integrado
+    #   [Network]      NameResolvingService=none        -> no toca resolv.conf
+    #                                                     (Tailscale lo maneja)
+    #   [DriverQuirks] DefaultInterface=?*              -> no destruye la
+    #                                                     iface al pararse
+    #                                                     (?* = cualquier
+    #                                                     driver)
+    #
+    # Enfoque idempotente por construccion:
+    #   1. Borrar cualquier linea previa de esas 3 claves (cubre valores
+    #      invalidos como DefaultInterface=true que un sed manual dejo).
+    #   2. Append un bloque canonico al final.
+    # Resultado: siempre exactamente un valor por clave, siempre correcto.
+    if [[ -s "${conf}" ]]; then
+        sed -i -E '/^[[:space:]]*(EnableNetworkConfiguration|NameResolvingService|DefaultInterface)[[:space:]]*=/d' "${conf}"
     fi
 
     local _sep=""
     [[ -s "${conf}" ]] && _sep=$'\n'
     {
         printf '%s' "${_sep}"
-        if [[ "${need_netconf}" -eq 1 ]]; then
-            printf '[General]\n'
-            printf 'EnableNetworkConfiguration=true\n'
-        fi
-        if [[ "${need_resolv}" -eq 1 ]]; then
-            printf '\n[Network]\n'
-            printf 'NameResolvingService=none\n'
-        fi
-        if [[ "${need_iface}" -eq 1 ]]; then
-            printf '\n[DriverQuirks]\n'
-            printf 'DefaultInterface=?*\n'
-        fi
+        printf '[General]\n'
+        printf 'EnableNetworkConfiguration=true\n'
+        printf '\n[Network]\n'
+        printf 'NameResolvingService=none\n'
+        printf '\n[DriverQuirks]\n'
+        printf 'DefaultInterface=?*\n'
     } >> "${conf}"
 
-    [[ "${need_netconf}" -eq 1 ]] && ok "iwd: DHCP integrado habilitado en ${conf}"
-    [[ "${need_resolv}" -eq 1 ]] && ok "iwd: NameResolvingService=none (Tailscale maneja DNS)"
-    [[ "${need_iface}"  -eq 1 ]] && ok "iwd: DriverQuirks.DefaultInterface=?* (no destruye la antena)"
+    ok "iwd: main.conf con directivas canonicas (DHCP + DNS=none + quirk ?*)"
     return 0
 }
 
@@ -166,9 +146,18 @@ fallback_status() {
 
 # fallback_on -- apagar NM, dejar iwd al mando con DHCP integrado.
 fallback_on() {
+    # Asegurar config de iwd SIEMPRE, incluso si ya estamos en fallback:
+    # asi un 'wifi fallback on' repara el archivo si le falta algo
+    # (por ejemplo, quitar un DefaultInterface=true invalido que un sed
+    # manual pudo haber dejado).
+    _fallback_ensure_iwd_netconf
+
     if systemctl is-active iwd >/dev/null 2>&1 \
        && ! systemctl is-active NetworkManager >/dev/null 2>&1; then
         ok "ya estas en fallback (iwd activo, NM parado)"
+        info "reincidiendo iwd para aplicar cualquier cambio de config..."
+        systemctl restart iwd 2>/dev/null || true
+        _fallback_wait_ip 30 || true
         return 0
     fi
 
@@ -182,7 +171,6 @@ fallback_on() {
     chmod 600 "${FALLBACK_STATE}"
 
     section "Cambiando a iwd (fallback)"
-    _fallback_ensure_iwd_netconf
 
     info "parando NetworkManager..."
     systemctl stop NetworkManager 2>/dev/null || true
