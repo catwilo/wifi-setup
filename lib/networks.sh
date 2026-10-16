@@ -208,10 +208,14 @@ networks_sync() {
         # Verificar si el perfil existe y ya esta correcto.
         if nm_con_exists "${profile}"; then
             local cur_ssid cur_iface cur_psk cur_auto
-            cur_ssid="$(nmcli -t -g 802-11-wireless.ssid con show "${profile}" 2>/dev/null || true)"
-            cur_iface="$(nm_con_get "${profile}" connection.interface-name || true)"
-            cur_psk="$(nmcli -s -t -g 802-11-wireless-security.psk con show "${profile}" 2>/dev/null || true)"
-            cur_auto="$(nm_con_get "${profile}" connection.autoconnect || true)"
+            # head -1: si por un bug previo hay perfiles duplicados con el
+            # mismo NAME, nmcli devuelve el valor una vez por perfil. Nos
+            # quedamos con el primero; el resto se limpia en nm_wifi_create
+            # (nm_con_delete por UUID).
+            cur_ssid="$(nmcli -t -g 802-11-wireless.ssid con show "${profile}" 2>/dev/null | head -1 || true)"
+            cur_iface="$(nm_con_get "${profile}" connection.interface-name 2>/dev/null | head -1 || true)"
+            cur_psk="$(nmcli -s -t -g 802-11-wireless-security.psk con show "${profile}" 2>/dev/null | head -1 || true)"
+            cur_auto="$(nm_con_get "${profile}" connection.autoconnect 2>/dev/null | head -1 || true)"
 
             if [[ "${cur_ssid}" == "${ssid}" \
                   && "${cur_iface}" == "${iface}" \

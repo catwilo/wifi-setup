@@ -89,10 +89,22 @@ nm_con_get() {
 # nm_con_delete <name> -- borra un perfil. Idempotente.
 nm_con_delete() {
     local name="$1"
-    if nm_con_exists "${name}"; then
-        nmcli con delete "${name}" >/dev/null
-        info "perfil borrado: ${name}"
-    fi
+    # Borrar por UUID: si hay perfiles duplicados con el mismo NAME,
+    # 'nmcli con delete <name>' falla con "is ambiguous". Pedimos todos
+    # los UUIDs con ese nombre y los borramos uno a uno. Idempotente:
+    # sin coincidencias retorna 0 sin hacer nada.
+    local uuids
+    uuids="$(nmcli -t -f NAME,UUID con show 2>/dev/null \
+        | awk -F: -v n="${name}" '$1==n {print $2}')"
+    [[ -n "${uuids}" ]] || return 0
+
+    local u deleted=0
+    while IFS= read -r u; do
+        [[ -n "${u}" ]] || continue
+        nmcli con delete uuid "${u}" >/dev/null 2>&1 || true
+        deleted=$((deleted + 1))
+    done <<< "${uuids}"
+    info "perfil(es) borrado(s): ${name} (${deleted})"
 }
 
 # nm_con_up <name> -- activa un perfil. Sin redireccion: la salida real
@@ -113,8 +125,15 @@ nm_con_down() {
 # nm_con_set_autoconnect <name> on|off
 nm_con_set_autoconnect() {
     local name="$1" mode="$2"
-    [[ "${mode}" == "on" || "${mode}" == "off" ]] \
-        || die "nm_con_set_autoconnect: modo invalido '${mode}'"
+    # Acepta yes/no (valores de la DB y de nmcli) ademas de on/off
+    # (idioma historico del API). Sin esto, networks_sync muere en el
+    # primer perfil con autoconnect=no guardado en la DB.
+    case "${mode}" in
+        on|yes|true|1)   mode="yes" ;;
+        off|no|false|0)  mode="no"  ;;
+        *) err "nm_con_set_autoconnect: modo invalido '${mode}' (on|off|yes|no)"
+           return 1 ;;
+    esac
     nmcli con mod "${name}" connection.autoconnect "${mode}" >/dev/null
 }
 
