@@ -321,20 +321,32 @@ _cmd_add() {
     fi
     [[ "${#pass}" -ge 8 ]] || _die "PSK minimo 8 caracteres"
 
-    local profile="wifi-${iface}-${ssid}"
-    nm_wifi_create "${profile}" "${iface}" "${ssid}" "${pass}"
-    nm_con_set_autoconnect "${profile}" on
-    ok "red '${ssid}' agregada en ${iface} (perfil: ${profile})"
+    # 1) DB primero: la DB es la fuente de verdad.
+    _networks_store_upsert "${ssid}" "${pass}" "${iface}" "yes" "0"
 
-    info "intentando conectar a '${ssid}'..."
-    local up_rc=0
-    nm_con_up "${profile}" || up_rc=$?
-    if [[ "${up_rc}" -eq 0 ]]; then
-        ok "conectado a '${ssid}' via ${iface}"
+    # 2) Propagar a los backends. networks_apply hace sync en NM (si
+    #    corre) e iwd (siempre escribe el .psk). Idempotente.
+    _load networks
+    networks_apply
+
+    ok "red '${ssid}' agregada en ${iface} (DB + NM + iwd)"
+
+    # 3) Si NM corre, intentar conectar y reportar. Si no, la red queda
+    #    guardada para cuando lo arranques.
+    if systemctl is-active NetworkManager >/dev/null 2>&1; then
+        local profile="wifi-${iface}-${ssid}"
+        info "intentando conectar a '${ssid}'..."
+        local up_rc=0
+        nm_con_up "${profile}" || up_rc=$?
+        if [[ "${up_rc}" -eq 0 ]]; then
+            ok "conectado a '${ssid}' via ${iface}"
+        else
+            err "no se pudo conectar a '${ssid}' (rc=${up_rc})"
+            err "causas comunes: red fuera de rango, PSK incorrecta, driver con problema"
+            err "revisa: wifi doctor | wifi showpass '${profile}'"
+        fi
     else
-        err "no se pudo conectar a '${ssid}' (rc=${up_rc})"
-        err "causas comunes: red fuera de rango, PSK incorrecta, driver con problema"
-        err "revisa: wifi doctor | wifi showpass '${profile}'"
+        info "NM no activo -- red guardada en la DB (usala cuando arranques NM)"
     fi
 }
 
@@ -450,15 +462,52 @@ _cmd_passwd() {
     fi
     [[ "${#pass}" -ge 8 ]] || _die "minimo 8 caracteres"
 
-    nmcli con mod "${profile}" 802-11-wireless-security.psk "${pass}"
-    info "PSK actualizada, reconectando '${profile}'..."
-    local up_rc=0
-    nm_con_up "${profile}" || up_rc=$?
-    if [[ "${up_rc}" -eq 0 ]]; then
-        ok "PSK actualizada y reconectado"
-    else
-        err "PSK actualizada, pero no reconecto (rc=${up_rc})"
-        err "revisa: wifi doctor | wifi showpass '${profile}'"
+    # Actualizar la PSK en la DB (fuente de verdad) y propagar a los
+    # dos backends. La DB guarda PSK por SSID; actualizamos todas las
+    # filas de ese SSID.
+    local ssid _line _s _p _i _a _pr _ts
+    ssid="$(nmcli -t -g 802-11-wireless.ssid con show "${profile}" 2>/dev/null | head -1 || true)"
+    [[ -n "${ssid}" ]] || ssid="${target}"
+    _load networks
+
+    # upsert con la PSK nueva, preservando iface/auto/prio existentes.
+    local tmp; tmp="$(mktemp "${TMPDIR:-/tmp}/wifi-tsv.XXXXXX")"
+    _networks_store_init
+    grep '^#' "${NETWORKS_STORE}" > "${tmp}" || true
+    local updated=0
+    while IFS= read -r _line; do
+        IFS=$'\t' read -r _s _p _i _a _pr _ts <<< "${_line}"
+        if [[ "${_s}" == "${ssid}" ]]; then
+            printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+                "${_s}" "${pass}" "${_i}" "${_a}" "${_pr}" "$(date +%s)" >> "${tmp}"
+            updated=$((updated + 1))
+        else
+            printf '%s\n' "${_line}" >> "${tmp}"
+        fi
+    done < <(_networks_store_rows)
+    if [[ "${updated}" -eq 0 ]]; then
+        printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+            "${ssid}" "${pass}" "${profile#wifi-}" "yes" "0" "$(date +%s)" >> "${tmp}"
+    fi
+    mv "${tmp}" "${NETWORKS_STORE}"
+    chmod 600 "${NETWORKS_STORE}"
+    info "PSK de '${ssid}' actualizada en la DB (${updated} fila(s))"
+
+    # Propagar a backends.
+    networks_apply
+
+    ok "PSK actualizada en DB + NM + iwd"
+
+    if systemctl is-active NetworkManager >/dev/null 2>&1; then
+        info "reconectando '${profile}'..."
+        local up_rc=0
+        nm_con_up "${profile}" || up_rc=$?
+        if [[ "${up_rc}" -eq 0 ]]; then
+            ok "reconectado con la nueva PSK"
+        else
+            err "PSK actualizada, pero no reconecto (rc=${up_rc})"
+            err "revisa: wifi doctor"
+        fi
     fi
 }
 

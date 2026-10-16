@@ -384,3 +384,83 @@ networks_import_from_iwd() {
         info "networks: iwd no tiene redes nuevas para importar"
     fi
 }
+
+
+# ---------------------------------------------------------------------------
+# Escritura en la DB y propagacion a los dos backends.
+# La DB (networks.tsv) es la fuente de verdad; NM e iwd son caches.
+# ---------------------------------------------------------------------------
+
+# _networks_store_upsert <ssid> <psk> <iface> [<auto>] [<prio>]
+# Agrega o actualiza la fila (ssid, iface). Preserva otras filas del mismo
+# SSID (distintas ifaces). Idempotente: si la fila ya existe, la reemplaza.
+_networks_store_upsert() {
+    local ssid="$1" psk="$2" iface="$3" auto="${4:-yes}" prio="${5:-0}"
+    local ts; ts="$(date +%s)"
+    _networks_store_init
+    local tmp; tmp="$(mktemp "${TMPDIR:-/tmp}/wifi-tsv.XXXXXX")"
+    grep '^#' "${NETWORKS_STORE}" > "${tmp}" || true
+    awk -F'\t' -v s="${ssid}" -v p="${psk}" -v i="${iface}" -v a="${auto}" \
+        -v pr="${prio}" -v u="${ts}" '
+        BEGIN { OFS="\t"; found=0 }
+        /^#/ { next }
+        NF < 3 { next }
+        $1==s && $3==i { print s,p,i,a,pr,u; found=1; next }
+        { print }
+        END { if (!found) print s,p,i,a,pr,u }
+    ' "${NETWORKS_STORE}" >> "${tmp}"
+    mv "${tmp}" "${NETWORKS_STORE}"
+    chmod 600 "${NETWORKS_STORE}"
+}
+
+# _networks_store_delete <ssid> -- quita todas las filas del SSID.
+_networks_store_delete() {
+    local ssid="$1"
+    [[ -f "${NETWORKS_STORE}" ]] || return 0
+    local tmp; tmp="$(mktemp "${TMPDIR:-/tmp}/wifi-tsv.XXXXXX")"
+    awk -F'\t' -v s="${ssid}" '
+        /^#/ { print; next }
+        $1==s { next }
+        { print }
+    ' "${NETWORKS_STORE}" > "${tmp}"
+    mv "${tmp}" "${NETWORKS_STORE}"
+    chmod 600 "${NETWORKS_STORE}"
+}
+
+# _iwd_store_write <ssid> <psk> -- escribe /var/lib/iwd/<ssid>.psk.
+# Solo toca el archivo de ese SSID; no toca el resto del store de iwd.
+_iwd_store_write() {
+    local ssid="$1" psk="$2"
+    mkdir -p "${IWD_DIR}" 2>/dev/null || return 0
+    local f="${IWD_DIR}/${ssid}.psk"
+    printf '[Security]\nPassphrase=%s\n' "${psk}" > "${f}" 2>/dev/null || return 1
+    chmod 600 "${f}" 2>/dev/null || true
+}
+
+# networks_apply_to_iwd -- propaga la DB al store de iwd (una vez por SSID
+# unico). Idempotente: reescribe los .psk con la PSK actual.
+networks_apply_to_iwd() {
+    [[ -d "${IWD_DIR}" ]] || return 0
+    [[ -f "${NETWORKS_STORE}" ]] || return 0
+    declare -A seen=()
+    local line ssid psk _if _auto _prio _ts
+    local applied=0
+    while IFS= read -r line; do
+        IFS=$'\t' read -r ssid psk _if _auto _prio _ts <<< "${line}"
+        [[ -n "${ssid}" && -n "${psk}" ]] || continue
+        [[ -n "${seen[${ssid}]:-}" ]] && continue
+        seen["${ssid}"]=1
+        _iwd_store_write "${ssid}" "${psk}" && applied=$((applied + 1))
+    done < <(_networks_store_rows)
+    [[ "${applied}" -gt 0 ]] && info "iwd: ${applied} red(es) propagadas desde la DB"
+    return 0
+}
+
+# networks_apply -- propaga la DB a NM (si corre) y a iwd. Un solo
+# punto de entrada para los comandos que escriben.
+networks_apply() {
+    if systemctl is-active NetworkManager >/dev/null 2>&1; then
+        networks_sync
+    fi
+    networks_apply_to_iwd
+}
