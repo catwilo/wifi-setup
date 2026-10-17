@@ -344,14 +344,33 @@ radio_down() {
     [[ -n "${iface}" ]] || die "uso: wifi radio down <iface> [--persist]"
     radio_is_iface "${iface}" || die "'${iface}' no es una interfaz WiFi"
 
-    local con; con="$(_radio_iface_con "${iface}")"
-    [[ -n "${con}" ]] || { warn "${iface} ya esta inactiva"; return 0; }
+    # 1) Bajar la conexion ACTIVA de esa iface, si hay una. No intentar
+    #    bajar un perfil arbitrario: si la iface no tiene conexion activa,
+    #    solo hay que deshabilitar autoconnect (paso 2).
+    local active
+    active="$(nmcli -t -f DEVICE,CONNECTION dev status 2>/dev/null \
+        | awk -F: -v i="${iface}" '$1==i && $2!="" {print $2; exit}')"
+    if [[ -n "${active}" ]]; then
+        nm_con_down "${active}"
+        info "conexion activa bajada: ${active}"
+    else
+        info "${iface} sin conexion activa"
+    fi
 
-    nm_con_down "${con}"
-
+    # 2) Con --persist: autoconnect=off en TODOS los perfiles de esa iface.
+    #    Bajar solo el activo dejaria los demas listos para reconectar en
+    #    el proximo boot/scan, que es justo lo que --persist evita.
     if [[ "${persist}" -eq 1 ]]; then
-        nm_con_set_autoconnect "${con}" off
-        ok "autoconnect OFF persistente: ${con}"
+        local n iname count=0
+        while IFS= read -r n; do
+            [[ -n "${n}" ]] || continue
+            iname="$(nmcli -t -g connection.interface-name con show "${n}" 2>/dev/null || true)"
+            [[ "${iname}" == "${iface}" ]] || continue
+            nm_con_set_autoconnect "${n}" off 2>/dev/null || true
+            count=$((count + 1))
+        done < <(nmcli -t -f NAME,TYPE con show 2>/dev/null \
+            | awk -F: '$2=="802-11-wireless"{print $1}')
+        ok "autoconnect OFF en ${count} perfil(es) de ${iface}"
     fi
 }
 
