@@ -186,12 +186,20 @@ _cmd_status() {
         _state="$(cat "/sys/class/net/${_if}/operstate" 2>/dev/null || echo "?")"
         _ip="$(ip -4 -o addr show "${_if}" 2>/dev/null | awk '{print $4}' | head -1)"
 
-        # Red conectada segun el gestor activo. Lectura directa del
-        # backend, sin cache ni inferencia.
+        # Red conectada segun el gestor activo. nmcli dev status devuelve
+        # el NOMBRE DEL PERFIL (wifi-wlan0-SSID); hay que resolver el SSID
+        # real leyendo 802-11-wireless.ssid del perfil. iwd ya devuelve
+        # el SSID directamente.
         _net=""
         if [ "${_mgr}" = "NetworkManager" ]; then
-            _net="$(nmcli -t -f DEVICE,CONNECTION dev status 2>/dev/null \
+            local _prof
+            _prof="$(nmcli -t -f DEVICE,CONNECTION dev status 2>/dev/null \
                 | awk -F: -v i="${_if}" '$1==i {print $2; exit}')"
+            if [ -n "${_prof}" ]; then
+                local _ssid
+                _ssid="$(nmcli -t -g 802-11-wireless.ssid con show "${_prof}" 2>/dev/null | head -1 || true)"
+                _net="${_ssid:-${_prof}}"
+            fi
         elif [ "${_mgr}" = "iwd" ]; then
             _net="$(iwctl station "${_if}" show 2>/dev/null \
                 | awk -F'  +' '/Connected network/ {print $3; exit}')"
