@@ -45,7 +45,11 @@ _networks_store_init() {
 # _networks_store_rows -- imprime todas las filas de datos (sin comentarios).
 _networks_store_rows() {
     [[ -f "${NETWORKS_STORE}" ]] || return 0
-    grep -v '^#' "${NETWORKS_STORE}" | grep -v '^[[:space:]]*$'
+    # Una sola pasada con awk: descarta comentarios y lineas vacias.
+    # Con grep en pipe + pipefail, "grep -v" devuelve 1 cuando no hay
+    # lineas que filtrar y mata el script bajo set -e. awk no tiene
+    # ese problema: no matchear es exito.
+    awk '!/^#/ && !/^[[:space:]]*$/' "${NETWORKS_STORE}"
 }
 
 # _networks_psk_for_ssid <ssid> -- busca la PSK del SSID en el store.

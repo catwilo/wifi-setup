@@ -202,8 +202,25 @@ _cmd_status() {
     [ "${_found}" -eq 1 ] || warn "no se detectaron antenas WiFi en el kernel"
 
     if [ "${_mgr}" = "NetworkManager" ]; then
-        section "Conexiones NM"
-        nm_summary 2>&1 || warn "nm_summary fallo"
+        section "Perfiles NM"
+        local _total=0 _auto=0 _noauto=0
+        local _name _autoflag
+        while IFS= read -r _name; do
+            [ -n "${_name}" ] || continue
+            _total=$((_total + 1))
+            _autoflag="$(nmcli -t -g connection.autoconnect con show "${_name}" 2>/dev/null || true)"
+            if [ "${_autoflag}" = "yes" ]; then
+                _auto=$((_auto + 1))
+            else
+                _noauto=$((_noauto + 1))
+            fi
+        done < <(nmcli -t -f NAME,TYPE con show 2>/dev/null | awk -F: '$2=="802-11-wireless"{print $1}')
+        printf '  total:              %d
+' "${_total}"
+        printf '  autoconectadas:     %d
+' "${_auto}"
+        printf '  NO autoconectadas:  %d
+' "${_noauto}"
     fi
 
     section "LAN"
@@ -213,10 +230,6 @@ _cmd_status() {
     else
         echo "  (perfil LAN gestionado por NM -- no aplica con $_mgr)"
     fi
-
-    section "VPN"
-    source "${LIB_DIR}/vpn.sh"
-    vpn_status 2>&1 || true
 
     section "Internet"
     if ping -c1 -W2 1.1.1.1 >/dev/null 2>&1; then
