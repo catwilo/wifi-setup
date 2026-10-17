@@ -211,18 +211,9 @@ radio_use() {
     #   3. Solo entonces apagar la vieja.
     # Si la nueva no llega a conectar, no se toca la vieja.
 
-    # Si la antena esta DOWN sin carrier, esperar 45s es inutil: no hay
-    # red que captar. Fallar rapido con mensaje claro.
-    local _link_state
-    _link_state="$(ip link show "${iface}" 2>/dev/null || true)"
-    case "${_link_state}" in
-        *"NO-CARRIER"*|*"state DOWN"*)
-            warn "${iface} sin carrier (NO-CARRIER o DOWN) -- sin red disponible"
-            warn "verifica que la antena este conectada y vea redes: wifi scan --iface ${iface}"
-            return 1
-            ;;
-    esac
-
+    # Sin carrier check previo: una antena apagada por software (SECONDARY)
+    # esta DOWN con NO-CARRIER, pero sigue siendo capaz de escanear y
+    # conectarse. Bloquearla impedia usar radio use para encenderla.
     local -a _up_args=("${iface}")
     [[ "${persist}" -eq 1 ]] && _up_args+=(--persist)
     info "encendiendo ${iface} (sin tocar las demas)..."
