@@ -628,6 +628,11 @@ networks_prune() {
         local has_nm=0 has_iwd=0
         if nm_con_exists "wifi-${_i}-${_s}" 2>/dev/null; then has_nm=1; fi
         if [[ -r "${IWD_DIR}/${_s}.psk" ]]; then has_iwd=1; fi
+
+        # Conservador: una fila se elimina solo si el SSID no existe en
+        # NINGUN backend (ni perfil NM ni .psk en iwd). Filas de una
+        # antena desconectada se conservan como historico -- el usuario
+        # decide cuando borrarlas con wifi delete.
         if [[ "${has_nm}" -eq 1 || "${has_iwd}" -eq 1 ]]; then
             printf '%s\n' "${line}" >> "${tmp}"
             kept=$((kept + 1))
