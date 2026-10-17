@@ -336,6 +336,9 @@ ConditionPathExists=${WIFI_BIN}
 Type=oneshot
 ExecStart=${WIFI_BIN} radio boot-select
 RemainAfterExit=no
+# boot-select espera 60s a PRIMARY y luego conecta SECONDARY (puede
+# tardar otros 30-60s). Default de systemd es 90s: insuficiente.
+TimeoutStartSec=180
 
 [Install]
 WantedBy=multi-user.target

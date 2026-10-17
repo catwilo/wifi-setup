@@ -275,21 +275,28 @@ _cmd_radio() {
     [[ -n "${sub}" ]] || _die "uso: wifi radio <list|primary|secondary|use|clear-session|up|down> [args]"
 
     _load nm radio
-    nm_require
     require_root
 
+    # boot-install/boot-uninstall no tocan nmcli: funcionan aunque NM
+    # este parado (util cuando estas en fallback y necesitas reinstalar
+    # el servicio tras un pull). El resto si requiere NM.
     case "${sub}" in
-        list)          radio_list ;;
-        primary)       radio_set_primary   "${1:-}" ;;
-        secondary)     radio_set_secondary "${1:-}" ;;
-        use)           radio_use           "${1:-}" ;;
-        clear-session) radio_clear_session ;;
-        up)            radio_up   "$@" ;;
-        down)          radio_down "$@" ;;
-        boot-select)   radio_boot_select ;;
         boot-install)   radio_boot_install ;;
         boot-uninstall) radio_boot_uninstall ;;
-        *) _die "subcomando desconocido: ${sub}" ;;
+        boot-select)    radio_boot_select ;;
+        *)
+            nm_require
+            case "${sub}" in
+                list)          radio_list ;;
+                primary)       radio_set_primary   "${1:-}" ;;
+                secondary)     radio_set_secondary "${1:-}" ;;
+                use)           radio_use           "${1:-}" ;;
+                clear-session) radio_clear_session ;;
+                up)            radio_up   "$@" ;;
+                down)          radio_down "$@" ;;
+                *) _die "subcomando desconocido: ${sub}" ;;
+            esac
+            ;;
     esac
 }
 

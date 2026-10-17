@@ -571,6 +571,9 @@ ConditionPathExists=${wifi_bin}
 Type=oneshot
 ExecStart=${wifi_bin} radio boot-select
 RemainAfterExit=no
+# boot-select espera 60s a PRIMARY y luego conecta SECONDARY (puede
+# tardar otros 30-60s). Default de systemd es 90s: insuficiente.
+TimeoutStartSec=180
 
 [Install]
 WantedBy=multi-user.target
@@ -578,6 +581,16 @@ EOF_SVC
     chmod 644 "${unit}"
     systemctl daemon-reload
     systemctl enable wifi-setup-boot-select >/dev/null 2>&1 || true
+
+    # Verificar habilitacion real: systemd puede fallar (unit invalida,
+    # systemd en estado raro) y un 'ok' sin verificar seria una mentira.
+    local state
+    state="$(systemctl is-enabled wifi-setup-boot-select 2>/dev/null || true)"
+    if [[ "${state}" != "enabled" ]]; then
+        err "servicio instalado pero NO habilitado (estado: ${state:-?})"
+        err "revisa: systemctl status wifi-setup-boot-select"
+        return 1
+    fi
     ok "servicio wifi-setup-boot-select instalado y habilitado"
     info "  unit: ${unit}"
     info "  exec: ${wifi_bin} radio boot-select"

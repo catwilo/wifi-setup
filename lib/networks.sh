@@ -481,10 +481,14 @@ _networks_store_delete() {
 # Solo toca el archivo de ese SSID; no toca el resto del store de iwd.
 _iwd_store_write() {
     local ssid="$1" psk="$2"
-    mkdir -p "${IWD_DIR}" 2>/dev/null || return 0
+    # Si /var/lib/iwd no existe o no se puede crear, es un fallo real:
+    # propagar 1 para que networks_apply_to_iwd NO cuente el SSID como
+    # propagado. Un exito silencioso aqui enganaria al usuario.
+    mkdir -p "${IWD_DIR}" 2>/dev/null || return 1
     local f="${IWD_DIR}/${ssid}.psk"
     printf '[Security]\nPassphrase=%s\n' "${psk}" > "${f}" 2>/dev/null || return 1
     chmod 600 "${f}" 2>/dev/null || true
+    return 0
 }
 
 # networks_apply_to_iwd -- propaga la DB al store de iwd (una vez por SSID
