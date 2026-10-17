@@ -288,8 +288,10 @@ _cmd_radio() {
 _cmd_add() {
     _maybe_help add "$@"
 
+    # add NO exige NM: con NM parado, la red se guarda en la DB + iwd
+    # y se conectara cuando NM arranque. Solo el paso "conectar" al
+    # final requiere NM (y ahi se chequea con systemctl).
     _load nm radio
-    nm_require
     require_root
 
     local ssid="" iface="" pass=""
@@ -416,11 +418,11 @@ _cmd_networks() {
     # import-iwd funciona con NM parado (ese es el caso real: estas en
     # fallback con iwd al mando). El resto de subcomandos si tocan nmcli.
     case "${sub}" in
-        import-iwd) shift; networks_import_from_iwd ;;
-        export)     shift; networks_export "${1:-}" ;;
-        import)     shift; networks_import "${1:-}" ;;
-        show)       shift; nm_require; networks_show "${1:-}" ;;
-        prune)      shift; nm_require; networks_prune ;;
+        import-iwd) networks_import_from_iwd ;;
+        export)     networks_export "${1:-}" ;;
+        import)     networks_import "${1:-}" ;;
+        show)       nm_require; networks_show "${1:-}" ;;
+        prune)      nm_require; networks_prune ;;
         *)
             nm_require
             case "${sub}" in
@@ -455,7 +457,15 @@ _cmd_switch() {
     nm_con_exists "${profile}" \
         || _die "perfil '${profile}' no existe -- usa: wifi add ${ssid} --iface ${iface}"
 
-    nm_con_up "${profile}"
+    info "conectando a '${ssid}' via ${iface} (${profile})..."
+    local up_rc=0
+    nm_con_up "${profile}" || up_rc=$?
+    if [[ "${up_rc}" -eq 0 ]]; then
+        ok "conectado a '${ssid}' via ${iface}"
+    else
+        err "no se pudo conectar a '${ssid}' (rc=${up_rc})"
+        err "revisa: wifi status | wifi doctor"
+    fi
 }
 
 # ---------------------------------------------------------------------------
@@ -641,15 +651,27 @@ _cmd_rename() {
         _die "ya existe un perfil llamado '${new}'"
     fi
 
+    # La DB indexa por (ssid, iface); el nombre del perfil NM es derivado
+    # (wifi-<iface>-<ssid>). Renombrar el perfil a algo distinto del
+    # patron hace que 'wifi networks sync' lo RECREE con el nombre viejo
+    # (el que la DB espera) la proxima vez. Advertir fuerte antes de
+    # permitir el cambio.
+    local _iface _ssid
+    _iface="$(nm_con_get "${old}" connection.interface-name 2>/dev/null | head -1 || true)"
+    _ssid="$(nmcli -t -g 802-11-wireless.ssid con show "${old}" 2>/dev/null | head -1 || true)"
+    if [[ -n "${_iface}" && -n "${_ssid}" ]]; then
+        local expected="wifi-${_iface}-${_ssid}"
+        if [[ "${new}" != "${expected}" ]]; then
+            warn "renombrar a '${new}' rompe el patron wifi-<iface>-<ssid>'"
+            warn "el proximo 'wifi networks sync' puede recrear '${expected}'"
+            read -r -p "continuar de todos modos? [s/N]: " _ans
+            [[ "${_ans}" =~ ^[sS]$ ]] || _die "cancelado"
+        fi
+    fi
+
     nmcli con mod "${old}" connection.id "${new}" >/dev/null
     ok "perfil renombrado: ${old} -> ${new}"
-
-    # Actualizar la DB si el perfil estaba registrado alli. El nombre del
-    # perfil es derivado (wifi-<iface>-<ssid>); no afecta la clave (ssid).
-    # Un rename no toca la DB, porque la DB indexa por ssid. Se informa
-    # al usuario por si esperaba un cambio de SSID.
-    info "la DB (ssid) no cambia -- solo cambia el nombre del perfil NM"
-    info "si querias cambiar el SSID de la red, usa: wifi add + wifi delete"
+    info "la DB (indexada por ssid) no cambia"
 }
 
 # ---------------------------------------------------------------------------
@@ -777,15 +799,43 @@ _cmd_showmac() {
 _cmd_autoconnect() {
     _maybe_help autoconnect "$@"
 
-    _load nm
+    _load nm networks
     nm_require
     require_root
 
     local profile="${1:-}" mode="${2:-}"
     [[ -n "${profile}" && -n "${mode}" ]] || _die "uso: wifi autoconnect <profile> <on|off>"
     nm_con_exists "${profile}" || _die "perfil '${profile}' no existe"
-    nm_con_set_autoconnect "${profile}" "${mode}"
-    ok "${profile} autoconnect=${mode}"
+
+    # Normalizar al vocabulario de la DB (yes/no).
+    local db_mode
+    case "${mode}" in
+        on|yes)   db_mode="yes" ;;
+        off|no)   db_mode="no" ;;
+        *) _die "modo invalido: '${mode}' (on|off)" ;;
+    esac
+    nm_con_set_autoconnect "${profile}" "${db_mode}"
+
+    # Actualizar la DB para que sync no revierta el cambio.
+    local ssid iface _line _s _p _i _a _pr _ts
+    ssid="$(nmcli -t -g 802-11-wireless.ssid con show "${profile}" 2>/dev/null | head -1 || true)"
+    iface="$(nm_con_get "${profile}" connection.interface-name 2>/dev/null | head -1 || true)"
+    if [[ -n "${ssid}" && -n "${iface}" && -f "${NETWORKS_STORE}" ]]; then
+        local tmp; tmp="$(mktemp "${TMPDIR:-/tmp}/wifi-tsv.XXXXXX")"
+        grep '^#' "${NETWORKS_STORE}" > "${tmp}" || true
+        while IFS= read -r _line; do
+            IFS=$'\t' read -r _s _p _i _a _pr _ts <<< "${_line}"
+            if [[ "${_s}" == "${ssid}" && "${_i}" == "${iface}" ]]; then
+                printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+                    "${_s}" "${_p}" "${_i}" "${db_mode}" "${_pr}" "$(date +%s)" >> "${tmp}"
+            else
+                printf '%s\n' "${_line}" >> "${tmp}"
+            fi
+        done < <(_networks_store_rows)
+        mv "${tmp}" "${NETWORKS_STORE}"
+        chmod 600 "${NETWORKS_STORE}"
+    fi
+    ok "${profile} autoconnect=${db_mode} (NM + DB)"
 }
 
 # ---------------------------------------------------------------------------

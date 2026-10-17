@@ -74,9 +74,19 @@ Cada subcomando acepta `-h`/`--help` para su ayuda detallada:
     sudo wifi showpass <profile>                   mostrar PSK en claro
     sudo wifi autoconnect <profile> <on|off>       autoconnect manual
 
-    sudo wifi networks list     tabla del store + presencia del perfil NM
-    sudo wifi networks merge    fundir perfiles NM al store (aditivo)
-    sudo wifi networks sync     regenerar perfiles NM desde el store
+    sudo wifi networks list          tabla del store (SSID, iface, auto, prio, NM, IWD)
+    sudo wifi networks show <ssid>   ficha completa de un SSID (PSK, filas, NM, IWD)
+    sudo wifi networks merge         fundir perfiles NM al store (aditivo)
+    sudo wifi networks sync          regenerar perfiles NM desde el store
+    sudo wifi networks import-iwd    importar redes de iwd al store (read-only)
+    sudo wifi networks export <p>    backup del store a <p>
+    sudo wifi networks import <p>    merge desde <p> (aditivo)
+    sudo wifi networks prune         eliminar filas huerfanas (con confirmacion)
+
+    sudo wifi rename <actual> <nuevo>    renombrar un perfil NM
+    sudo wifi setpriority <ssid|perfil> <N>   cambiar prioridad de autoconnect
+    sudo wifi delete <ssid|perfil>       borrar perfil + filas de la DB
+    sudo wifi showpass <ssid|perfil>     ver PSK (DB -> NM -> iwd)
 
 ### MAC
 
@@ -148,10 +158,15 @@ Cada subcomando acepta `-h`/`--help` para su ayuda detallada:
 - **Antenas**: dos antenas WiFi pueden estar conectadas simultaneamente
   a redes distintas. PRIMARY/SECONDARY solo controlan la prioridad de
   ruta cuando ambas tienen internet. No implica apagar ninguna.
-- **Store de redes**: `networks.tsv` es la fuente central. Una fila por
-  (ssid, iface). La PSK se guarda una vez por SSID y se propaga a todas
-  las filas del mismo SSID. `merge` es aditivo (nunca borra); `sync`
-  regenera perfiles NM desde el store.
+- **Store de redes**: `networks.tsv` es la fuente central y unica. Una
+  fila por (ssid, iface). La PSK se guarda una vez por SSID y se propaga
+  a todas las filas del mismo SSID y a ambos backends (NM keyfile y
+  `/var/lib/iwd/<ssid>.psk`). `merge` es aditivo; `sync` regenera
+  perfiles NM desde el store; `add` y `passwd` escriben en los dos
+  backends de una vez.
+- **iwd**: es el fallback manual del usuario. `wifi-setup` no lo
+  gestiona: solo lo lee (`import-iwd`) y le escribe la PSK al agregar
+  una red, para que el ciclo iwd <-> NM no pierda credenciales.
 - **Persistencia**: STATE_DIR/install.state, radio.state, radio.session,
   lan.state, networks.tsv, fallback.state, last-scan.txt.
 - **Ficheros de config**: CONFIG_DIR/usb-names.conf (mapeos MAC -> iface).

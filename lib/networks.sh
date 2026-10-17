@@ -569,6 +569,14 @@ networks_import() {
 # backend (ni perfil NM ni .psk en iwd). Con confirmacion explicita.
 networks_prune() {
     [[ -f "${NETWORKS_STORE}" ]] || { warn "DB vacia"; return 0; }
+
+    # Sin NM, nm_con_exists siempre falla y TODAS las filas parecen
+    # huerfanas. Abortar: prune solo tiene sentido con NM activo.
+    if ! systemctl is-active NetworkManager >/dev/null 2>&1; then
+        err "prune requiere NM activo (si no, todas las filas parecen huerfanas)"
+        err "arranca NM primero: wifi fallback off"
+        return 1
+    fi
     local tmp; tmp="$(mktemp "${TMPDIR:-/tmp}/wifi-tsv.XXXXXX")"
     grep '^#' "${NETWORKS_STORE}" > "${tmp}" || true
 

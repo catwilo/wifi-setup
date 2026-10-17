@@ -72,8 +72,13 @@ antes de tocar libs de negocio.
                         elegir.
                         No crea perfiles, no conecta, no toca estado.
 
-    networks.sh         Store central de redes WiFi. TSV con una fila por
-                        (ssid, iface). merge (aditivo) y sync (idempotente).
+    networks.sh         Store central y UNICO de redes WiFi. TSV con una
+                        fila por (ssid, iface). Fuente de verdad: add y
+                        passwd escriben aqui primero, luego propagan a
+                        NM (keyfile) e iwd (/var/lib/iwd/<ssid>.psk).
+                        merge/import-iwd alimentan la DB; sync/apply
+                        propagan a los backends; export/import mueven la
+                        DB entre equipos; prune limpia filas huerfanas.
 
     lan.sh              Cable ethernet. Perfiles NM (manual/shared/auto) con
                         autoconnect=off. Activacion manual con `wifi lan up`.
@@ -115,7 +120,11 @@ NO conecta Tailscale (eso es `wifi vpn up`).
     wifi scan [--iface X]  escaneo de redes visibles ahora
     wifi radio *        antenas: list/primary/secondary/use/up/down
     wifi add [<ssid>]   crear perfil + conectar (picker fzf sin <ssid>)
-    wifi networks *     store: list/merge/sync
+    wifi networks *     store: list/show/merge/sync/import-iwd/export/import/prune
+    wifi rename         renombrar un perfil NM
+    wifi setpriority    cambiar prioridad de autoconnect
+    wifi delete         borrar un perfil + filas de la DB
+    wifi showpass       ver PSK (DB -> NM -> iwd)
     wifi switch <ssid>  activar perfil guardado
     wifi passwd <profile|ssid>  cambiar PSK y reconectar
     wifi fallback *     alternar NM (backbone) e iwd (fallback)
