@@ -252,7 +252,9 @@ help_radio() {
     _help_cmd "  " "clear-session"       "olvida override de sesion"
     _help_cmd "  " "up <iface> [--persist]" "activa la antena (autoconnect on con --persist)"
     _help_cmd "  " "down <iface> [--persist]" "desactiva la antena (autoconnect off con --persist)"
-    _help_cmd "  " "boot-select"        "fallback de arranque (servicio systemd, no manual)"
+    _help_cmd "  " "boot-install"       "instala el servicio de fallback de arranque"
+    _help_cmd "  " "boot-uninstall"     "remueve el servicio de fallback de arranque"
+    _help_cmd "  " "boot-select"        "fallback de arranque (interno, lo corre systemd)"
     printf '\n'
     _help_intro "Modelo: PRIMARY/SECONDARY solo controlan la prioridad de ruta;"
     _help_intro "ambas antenas pueden estar activas simultaneamente."

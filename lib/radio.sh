@@ -546,3 +546,52 @@ radio_boot_select() {
     err "boot-select: no se pudo conectar '${best_ssid}' en ${secondary}"
     return 1
 }
+
+
+# ---------------------------------------------------------------------------
+# radio_boot_install / radio_boot_uninstall
+# Instalan o remueven el servicio systemd wifi-setup-boot-select en el
+# nodo actual. Repetible: se puede correr cada vez que cambie el binario
+# o se quiera reinstalar sin rehacer todo el install.
+# ---------------------------------------------------------------------------
+radio_boot_install() {
+    local unit="/etc/systemd/system/wifi-setup-boot-select.service"
+    local wifi_bin
+    wifi_bin="$(command -v wifi 2>/dev/null || printf '%s/bin/wifi' "${BASE_DIR:-/usr/local/share/wifi-setup}")"
+    [[ -x "${wifi_bin}" ]] || { err "binario 'wifi' no encontrado en ${wifi_bin}"; return 1; }
+
+    cat > "${unit}" <<EOF_SVC
+[Unit]
+Description=wifi-setup boot-select (fallback de antena al arranque)
+After=NetworkManager.service
+Wants=NetworkManager.service
+ConditionPathExists=${wifi_bin}
+
+[Service]
+Type=oneshot
+ExecStart=${wifi_bin} radio boot-select
+RemainAfterExit=no
+
+[Install]
+WantedBy=multi-user.target
+EOF_SVC
+    chmod 644 "${unit}"
+    systemctl daemon-reload
+    systemctl enable wifi-setup-boot-select >/dev/null 2>&1 || true
+    ok "servicio wifi-setup-boot-select instalado y habilitado"
+    info "  unit: ${unit}"
+    info "  exec: ${wifi_bin} radio boot-select"
+}
+
+radio_boot_uninstall() {
+    local unit="/etc/systemd/system/wifi-setup-boot-select.service"
+    if [[ ! -f "${unit}" ]]; then
+        info "servicio wifi-setup-boot-select no instalado -- nada que hacer"
+        return 0
+    fi
+    systemctl disable wifi-setup-boot-select >/dev/null 2>&1 || true
+    systemctl stop    wifi-setup-boot-select >/dev/null 2>&1 || true
+    rm -f "${unit}"
+    systemctl daemon-reload
+    ok "servicio wifi-setup-boot-select eliminado"
+}

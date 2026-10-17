@@ -287,6 +287,8 @@ _cmd_radio() {
         up)            radio_up   "$@" ;;
         down)          radio_down "$@" ;;
         boot-select)   radio_boot_select ;;
+        boot-install)   radio_boot_install ;;
+        boot-uninstall) radio_boot_uninstall ;;
         *) _die "subcomando desconocido: ${sub}" ;;
     esac
 }
