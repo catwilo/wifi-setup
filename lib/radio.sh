@@ -299,6 +299,32 @@ _radio_iface_con() {
 # radio_up <iface> [--persist]
 # Activa el perfil WiFi activo de esa antena.
 # ---------------------------------------------------------------------------
+
+
+# _radio_db_set_autoconnect <ssid> <iface> <yes|no>
+# Actualiza la DB para que networks_sync no revierta el cambio aplicado
+# a NM. No-op si la fila no existe en la DB (el perfil no esta gestionado).
+_radio_db_set_autoconnect() {
+    local ssid="$1" iface="$2" mode="$3"
+    [[ -f "${NETWORKS_STORE}" ]] || return 0
+    local tmp; tmp="$(mktemp "${TMPDIR:-/tmp}/wifi-tsv.XXXXXX")"
+    grep '^#' "${NETWORKS_STORE}" > "${tmp}" || true
+    local _s _p _i _a _pr _ts _changed=0
+    while IFS= read -r _line; do
+        IFS=$'\t' read -r _s _p _i _a _pr _ts <<< "${_line}"
+        if [[ "${_s}" == "${ssid}" && "${_i}" == "${iface}" ]]; then
+            printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+                "${_s}" "${_p}" "${_i}" "${mode}" "${_pr}" "$(date +%s)" >> "${tmp}"
+            _changed=1
+        else
+            printf '%s\n' "${_line}" >> "${tmp}"
+        fi
+    done < <(_networks_store_rows)
+    mv "${tmp}" "${NETWORKS_STORE}"
+    chmod 600 "${NETWORKS_STORE}"
+    return 0
+}
+
 radio_up() {
     local iface="${1:-}" persist=0
     shift || true
@@ -324,7 +350,10 @@ radio_up() {
         fi
         if [[ "${persist}" -eq 1 ]]; then
             nm_con_set_autoconnect "${con}" on 2>/dev/null || true
-            ok "autoconnect ON persistente: ${con}"
+            local _ssid
+            _ssid="$(nmcli -t -g 802-11-wireless.ssid con show "${con}" 2>/dev/null | head -1 || true)"
+            [[ -n "${_ssid}" ]] && _radio_db_set_autoconnect "${_ssid}" "${iface}" "yes"
+            ok "autoconnect ON persistente: ${con} (NM + DB)"
         fi
     else
         ok "${iface} encendida (sin perfil NM -- usa wifi add para conectarla)"
@@ -367,6 +396,9 @@ radio_down() {
             iname="$(nmcli -t -g connection.interface-name con show "${n}" 2>/dev/null || true)"
             [[ "${iname}" == "${iface}" ]] || continue
             nm_con_set_autoconnect "${n}" off 2>/dev/null || true
+            local _ssid
+            _ssid="$(nmcli -t -g 802-11-wireless.ssid con show "${n}" 2>/dev/null | head -1 || true)"
+            [[ -n "${_ssid}" ]] && _radio_db_set_autoconnect "${_ssid}" "${iface}" "no"
             count=$((count + 1))
         done < <(nmcli -t -f NAME,TYPE con show 2>/dev/null \
             | awk -F: '$2=="802-11-wireless"{print $1}')
