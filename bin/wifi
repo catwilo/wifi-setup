@@ -413,25 +413,19 @@ _cmd_networks() {
     shift || true
 
     _load nm radio networks
-    require_root
 
-    # import-iwd funciona con NM parado (ese es el caso real: estas en
-    # fallback con iwd al mando). El resto de subcomandos si tocan nmcli.
+    # Require_root por subcomando: lectura (list/show) no requiere,
+    # escritura si. import-iwd es read-only sobre iwd pero escribe la DB.
     case "${sub}" in
-        import-iwd) networks_import_from_iwd ;;
-        export)     networks_export "${1:-}" ;;
-        import)     networks_import "${1:-}" ;;
-        show)       nm_require; networks_show "${1:-}" ;;
-        prune)      nm_require; networks_prune ;;
-        *)
-            nm_require
-            case "${sub}" in
-                list|"") networks_list ;;
-                merge)   networks_merge ;;
-                sync)    networks_sync ;;
-                *) _die "uso: wifi networks <list|show|merge|sync|import-iwd|export|import|prune>" ;;
-            esac
-            ;;
+        list|"") nm_require; networks_list ;;
+        show)    nm_require; networks_show "${1:-}" ;;
+        import-iwd) require_root; networks_import_from_iwd ;;
+        merge)   require_root; nm_require; networks_merge ;;
+        sync)    require_root; nm_require; networks_sync ;;
+        export)  require_root; networks_export "${1:-}" ;;
+        import)  require_root; networks_import "${1:-}" ;;
+        prune)   require_root; nm_require; networks_prune ;;
+        *) _die "uso: wifi networks <list|show|merge|sync|import-iwd|export|import|prune>" ;;
     esac
 }
 
