@@ -303,14 +303,31 @@ radio_up() {
     [[ -n "${iface}" ]] || die "uso: wifi radio up <iface> [--persist]"
     radio_is_iface "${iface}" || die "'${iface}' no es una interfaz WiFi"
 
-    local con; con="$(_radio_iface_con "${iface}")"
-    [[ -n "${con}" ]] || die "no hay conexion WiFi asociada a ${iface} -- corre 'wifi add <ssid> ${iface}' primero"
+    # Enciende la antena a nivel kernel SIEMPRE. Si ademas hay un perfil
+    # NM asociado, lo activa. Si no lo hay, la antena queda encendida y
+    # lista para scan/monitor/nuevo perfil. No morir por falta de perfil.
+    ip link set "${iface}" up 2>/dev/null || true
+    if nm_require 2>/dev/null; then
+        nmcli dev set "${iface}" managed yes 2>/dev/null || true
+    fi
 
-    nm_con_up "${con}"
-
-    if [[ "${persist}" -eq 1 ]]; then
-        nm_con_set_autoconnect "${con}" on
-        ok "autoconnect ON persistente: ${con}"
+    local con
+    con="$(_radio_iface_con "${iface}" 2>/dev/null || true)"
+    if [[ -n "${con}" ]]; then
+        if nm_con_up "${con}" 2>/dev/null; then
+            ok "${iface} encendida, conectada con '${con}'"
+        else
+            warn "${iface} encendida, pero '${con}' no conecto (revisa: wifi status)"
+        fi
+        if [[ "${persist}" -eq 1 ]]; then
+            nm_con_set_autoconnect "${con}" on 2>/dev/null || true
+            ok "autoconnect ON persistente: ${con}"
+        fi
+    else
+        ok "${iface} encendida (sin perfil NM -- usa wifi add para conectarla)"
+        if [[ "${persist}" -eq 1 ]]; then
+            ok "${iface} persistente: managed=yes"
+        fi
     fi
 }
 

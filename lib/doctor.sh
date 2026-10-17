@@ -446,6 +446,67 @@ _doctor_summary() {
 # ---------------------------------------------------------------------------
 # doctor_run [--fix]
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Chequeo 7: coherencia DB (networks.tsv) <-> backends (NM + iwd).
+# Avisa si hay filas en la DB sin perfil NM, SSIDs sin .psk en iwd, o
+# perfiles NM que no estan en la DB. Solo reporta; con --fix no toca
+# nada todavia (seria destructivo sobre credenciales).
+# ---------------------------------------------------------------------------
+_doctor_check_db() {
+    _doctor_section "Coherencia DB <-> backends"
+
+    local store="${STATE_DIR}/networks.tsv"
+    if [[ ! -f "${store}" ]]; then
+        _doctor_warn "DB no existe (${store}) -- corre: wifi networks merge"
+        return 0
+    fi
+
+    local line _s _p _i _a _pr _ts
+    local rows=0 nm_missing=0 iwd_missing=0
+    local -a nm_missing_list=() iwd_missing_list=()
+
+    while IFS= read -r line; do
+        IFS=$'\t' read -r _s _p _i _a _pr _ts <<< "${line}"
+        [[ -n "${_s}" && -n "${_i}" ]] || continue
+        rows=$((rows + 1))
+        if ! nm_con_exists "wifi-${_i}-${_s}" 2>/dev/null; then
+            nm_missing=$((nm_missing + 1))
+            nm_missing_list+=("${_s}@${_i}")
+        fi
+        if [[ ! -r "${IWD_DIR}/${_s}.psk" ]]; then
+            iwd_missing=$((iwd_missing + 1))
+            iwd_missing_list+=("${_s}@${_i}")
+        fi
+    done < <(awk '!/^#/ && !/^[[:space:]]*$/' "${store}")
+
+    if [[ "${rows}" -eq 0 ]]; then
+        _doctor_warn "DB vacia (0 filas)"
+        return 0
+    fi
+    _doctor_ok "DB: ${rows} fila(s)"
+
+    if [[ "${nm_missing}" -eq 0 ]]; then
+        _doctor_ok "todas las filas tienen perfil NM"
+    else
+        _doctor_warn "${nm_missing} fila(s) sin perfil NM -- corre: wifi networks sync"
+        local x
+        for x in "${nm_missing_list[@]}"; do
+            printf '         - %s\n' "${x}" >&2
+        done
+    fi
+
+    if [[ "${iwd_missing}" -eq 0 ]]; then
+        _doctor_ok "todas las filas tienen .psk en iwd"
+    else
+        _doctor_warn "${iwd_missing} fila(s) sin .psk en iwd -- corre: wifi networks sync (o wifi passwd)"
+        local x
+        for x in "${iwd_missing_list[@]}"; do
+            printf '         - %s\n' "${x}" >&2
+        done
+    fi
+}
+
 doctor_run() {
     DOCTOR_FIX_MODE=0
     if [[ "${1:-}" == "--fix" ]]; then
@@ -466,6 +527,7 @@ doctor_run() {
     _doctor_check_usb_links
     _doctor_check_symlink
     _doctor_check_tailscale
+    _doctor_check_db
 
     _doctor_summary
 }

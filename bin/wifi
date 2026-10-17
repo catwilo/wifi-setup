@@ -321,6 +321,17 @@ _cmd_add() {
     fi
     [[ -n "${ssid}" ]] || _die "uso: wifi add [<ssid>] [--iface X] [--pass P]"
 
+    # SSID con espacios al inicio/fin: el nombre del perfil NM los
+    # incluye y genera duplicados con nombres casi identicos (ver:
+    # "Familia_Mora" vs "Familia_Mora "). Advertir y pedir confirmacion
+    # antes de crear basura.
+    if [[ "${ssid}" =~ ^[[:space:]] || "${ssid}" =~ [[:space:]]$ ]]; then
+        warn "el SSID tiene espacios al inicio o al final: '${ssid}'"
+        warn "esto crea un perfil con espacios en el nombre (dificil de distinguir)"
+        read -r -p "continuar igual? [s/N]: " _ans
+        [[ "${_ans}" =~ ^[sS]$ ]] || _die "cancelado"
+    fi
+
     if [[ -z "${iface}" ]]; then
         _radio_load_state
         iface="${RADIO_PRIMARY:-$(radio_ifaces | head -1)}"
