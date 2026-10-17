@@ -422,7 +422,7 @@ _cmd_networks() {
     require_root
 
     case "${sub}" in
-        list|"") nm_require; networks_list ;;
+        list|"") nm_require; networks_list "$@" ;;
         show)    nm_require; networks_show "${1:-}" ;;
         import-iwd) networks_import_from_iwd ;;
         merge)   nm_require; networks_merge ;;

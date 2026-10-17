@@ -316,12 +316,15 @@ help_add() {
 
 help_networks() {
     _help_title "wifi networks -- store central de redes WiFi"
-    _help_usage "sudo wifi networks <list|show|merge|sync|import-iwd|export|import|prune>"
+    _help_usage "sudo wifi networks <list [--sort <col>] [--reverse]|show|merge|sync|import-iwd|export|import|prune>"
     _help_intro ""
     _help_intro "Store: STATE_DIR/networks.tsv, una fila por (ssid, iface)."
     _help_intro "La PSK se guarda una vez por SSID y se propaga a todas las filas."
     printf '\n'
-    _help_cmd "  " "list"              "tabla del store + presencia del perfil NM"
+    _help_cmd "  " "list"              "tabla del store (ordenable)"
+    _help_intro "     columnas: ssid, iface, auto, prio, nm, iwd"
+    _help_intro "     --sort <col>  ordenar por columna (default: ssid)"
+    _help_intro "     --reverse     descendente"
     _help_cmd "  " "show <ssid>"       "ficha completa de un SSID"
     _help_cmd "  " "merge"             "funde perfiles NM actuales al store (aditivo)"
     _help_cmd "  " "sync"              "regenera perfiles NM desde el store"

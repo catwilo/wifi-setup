@@ -265,6 +265,21 @@ networks_sync() {
 # networks_list -- reemplazo de wifi networks: tabla unificada store + NM.
 # ---------------------------------------------------------------------------
 networks_list() {
+    local sort_col="ssid" reverse=0
+    while [[ "$#" -gt 0 ]]; do
+        case "$1" in
+            --sort) sort_col="${2:-ssid}"; shift 2 ;;
+            --sort=*) sort_col="${1#--sort=}"; shift ;;
+            --reverse|-r) reverse=1; shift ;;
+            *) shift ;;
+        esac
+    done
+    case "${sort_col}" in
+        ssid|iface|auto|prio|nm|iwd) ;;
+        *) warn "columna invalida: '${sort_col}' (ssid|iface|auto|prio|nm|iwd) -- usando ssid"
+           sort_col="ssid" ;;
+    esac
+
     _networks_store_init
 
     local _nrows=0
@@ -277,21 +292,45 @@ networks_list() {
         return 0
     fi
 
-    printf '%-24s %-10s %-6s %-6s %-6s %-6s\n' \
-        "SSID" "IFACE" "AUTO" "PRIO" "NM" "IWD"
-    printf '%s\n' "--------------------------------------------------------------------------"
-
+    # Construir filas con clave de ordenamiento (padded para numericos).
+    local -a _rows=()
     local line ssid psk iface auto prio _ts profile
-    local nm_ok iwd_ok
+    local nm_ok iwd_ok key formatted
     while IFS= read -r line; do
         IFS=$'\t' read -r ssid psk iface auto prio _ts <<< "${line}"
         [[ -n "${ssid}" && -n "${iface}" ]] || continue
         profile="wifi-${iface}-${ssid}"
         if nm_con_exists "${profile}" 2>/dev/null; then nm_ok="si"; else nm_ok="NO"; fi
         if [[ -r "${IWD_DIR}/${ssid}.psk" ]]; then iwd_ok="si"; else iwd_ok="NO"; fi
-        printf '%-24s %-10s %-6s %-6s %-6s %-6s\n' \
-            "${ssid}" "${iface}" "${auto}" "${prio}" "${nm_ok}" "${iwd_ok}"
+        case "${sort_col}" in
+            ssid)  key="${ssid}" ;;
+            iface) key="${iface}" ;;
+            auto)  key="${auto}" ;;
+            prio)  key="$(printf '%010d' "${prio}")" ;;
+            nm)    key="${nm_ok}" ;;
+            iwd)   key="${iwd_ok}" ;;
+        esac
+        formatted="$(printf '%-24s %-10s %-6s %-6s %-6s %-6s' \
+            "${ssid}" "${iface}" "${auto}" "${prio}" "${nm_ok}" "${iwd_ok}")"
+        _rows+=("${key}"$'\t'"${formatted}")
     done < <(_networks_store_rows)
+
+    # Ordenar con sort (delegar a coreutils; IFS newline para preservar
+    # espacios internos). sort default = ascending.
+    local -a _sorted=()
+    if [[ "${reverse}" -eq 1 ]]; then
+        mapfile -t _sorted < <(printf '%s\n' "${_rows[@]}" | sort -r)
+    else
+        mapfile -t _sorted < <(printf '%s\n' "${_rows[@]}" | sort)
+    fi
+
+    printf '%-24s %-10s %-6s %-6s %-6s %-6s\n' \
+        "SSID" "IFACE" "AUTO" "PRIO" "NM" "IWD"
+    printf '%s\n' "--------------------------------------------------------------------------"
+    local r
+    for r in "${_sorted[@]}"; do
+        printf '%s\n' "${r#*$'\t'}"
+    done
 }
 
 # ---------------------------------------------------------------------------
