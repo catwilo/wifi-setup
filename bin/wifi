@@ -56,8 +56,10 @@ else
 fi
 _SELF_DIR="$(cd "$(dirname "${_SELF}")" && pwd)"
 
+# $'...' (ANSI-C quoting): produce el byte ESC real. Con comillas simples
+# '\033' el trap ERR imprimiria los caracteres literales, no el color.
 if [[ -t 1 ]]; then
-    _R='\033[0;31m'; _X='\033[0m'
+    _R=$'\033[0;31m'; _X=$'\033[0m'
 else
     _R=''; _X=''
 fi
@@ -1057,10 +1059,10 @@ case "${CMD}" in
     check|verify)    _cmd_check "$@" ;;
     status)          _cmd_status "$@" ;;
     ifaces)          _cmd_ifaces "$@" ;;
-    radio)           _cmd_radio "$@" ;;
-    scan)            _cmd_scan "$@" ;;
+    radio)           _cmd_radio "$@" || exit $? ;;
+    scan)            _cmd_scan "$@" || exit $? ;;
     add)             _cmd_add "$@" ;;
-    networks)        _cmd_networks "$@" ;;
+    networks)        _cmd_networks "$@" || exit $? ;;
     switch)          _cmd_switch "$@" ;;
     passwd|password) _cmd_passwd "$@" ;;
     showpass)        _cmd_showpass "$@" ;;
@@ -1072,11 +1074,11 @@ case "${CMD}" in
     autoconnect)     _cmd_autoconnect "$@" ;;
     panic)           _cmd_panic "$@" ;;
     monitor)         _cmd_monitor "$@" ;;
-    doctor)          _cmd_doctor "$@" ;;
+    doctor)          _cmd_doctor "$@" || exit $? ;;
     lan)             _cmd_lan "$@" ;;
     usb-names)       _cmd_usb_names "$@" ;;
     vpn)             _cmd_vpn "$@" ;;
-    fallback)        _cmd_fallback "$@" ;;
+    fallback)        _cmd_fallback "$@" || exit $? ;;
     version|-v|--version) _cmd_version "$@" ;;
     help|-h|--help|"")    _cmd_help "$@" ;;
     *)
