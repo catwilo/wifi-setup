@@ -286,6 +286,7 @@ _cmd_radio() {
         clear-session) radio_clear_session ;;
         up)            radio_up   "$@" ;;
         down)          radio_down "$@" ;;
+        boot-select)   radio_boot_select ;;
         *) _die "subcomando desconocido: ${sub}" ;;
     esac
 }

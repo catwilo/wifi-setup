@@ -475,3 +475,74 @@ radio_ifaces_list() {
     fi
 }
 
+
+# ---------------------------------------------------------------------------
+# radio_boot_select -- fallback de arranque: si PRIMARY no tiene IP tras
+# 60s, activa la mejor SECONDARY (mayor prioridad en la DB).
+# Corre UNA VEZ al boot via wifi-setup-boot-select.service. No es
+# watchdog: no interfiere con estado de runtime. Si el usuario activa
+# ambas antenas despues del boot, nada las toca.
+# ---------------------------------------------------------------------------
+radio_boot_select() {
+    _radio_load_state
+    local primary="${RADIO_PRIMARY:-}"
+    local secondary="${RADIO_SECONDARY:-}"
+
+    if [[ -z "${primary}" || -z "${secondary}" ]]; then
+        info "boot-select: sin PRIMARY/SECONDARY definidas -- nada que hacer"
+        return 0
+    fi
+
+    # 1) Esperar hasta 60s a que PRIMARY tenga IP (NM arranca en paralelo).
+    local waited=0 ip
+    while [[ "${waited}" -lt 60 ]]; do
+        ip="$(ip -4 -o addr show "${primary}" 2>/dev/null | awk '{print $4}' | head -1)"
+        if [[ -n "${ip}" ]]; then
+            info "boot-select: ${primary} con IP ${ip} -- nada que hacer"
+            return 0
+        fi
+        sleep 3
+        waited=$((waited + 3))
+    done
+
+    # 2) PRIMARY sin IP tras 60s. Activar SECONDARY.
+    warn "boot-select: ${primary} sin IP tras 60s -- activando ${secondary}"
+
+    if ! systemctl is-active NetworkManager >/dev/null 2>&1; then
+        warn "boot-select: NM no activo -- no se puede activar ${secondary}"
+        return 1
+    fi
+
+    if ! ip link show "${secondary}" >/dev/null 2>&1; then
+        warn "boot-select: ${secondary} no existe en el kernel -- sin fallback"
+        return 1
+    fi
+
+    # Asegurar que existen los perfiles NM para SECONDARY (los crea la DB).
+    if command -v networks_sync >/dev/null 2>&1; then
+        networks_sync >/dev/null 2>&1 || true
+    fi
+
+    # Elegir el perfil de SECONDARY con mayor prioridad en la DB.
+    local best_ssid
+    best_ssid="$(_networks_store_rows \
+        | awk -F'\t' -v i="${secondary}" '$3==i && $2!="" {print $5"\t"$1}' \
+        | sort -rn -k1,1 -k2,2 \
+        | head -1 | cut -f2)"
+
+    if [[ -z "${best_ssid}" ]]; then
+        warn "boot-select: sin perfiles para ${secondary} en la DB"
+        return 1
+    fi
+
+    local profile="wifi-${secondary}-${best_ssid}"
+    info "boot-select: conectando ${profile}"
+    ip link set "${secondary}" up 2>/dev/null || true
+    nmcli dev set "${secondary}" managed yes 2>/dev/null || true
+    if nm_con_up "${profile}"; then
+        ok "boot-select: ${secondary} conectada a '${best_ssid}'"
+        return 0
+    fi
+    err "boot-select: no se pudo conectar '${best_ssid}' en ${secondary}"
+    return 1
+}

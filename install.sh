@@ -153,7 +153,7 @@ _root_phase() {
         info "instalacion previa detectada -- limpiando..."
         sweep_legacy_install
 
-        for svc in wifi-setup-forward wifi-setup-client wifi-setup-lan; do
+        for svc in wifi-setup-forward wifi-setup-client wifi-setup-lan wifi-setup-boot-select; do
             systemctl stop    "${svc}" 2>/dev/null || true
             systemctl disable "${svc}" 2>/dev/null || true
             rm -f "/etc/systemd/system/${svc}.service"
@@ -322,6 +322,28 @@ _root_phase() {
     mkdir -p "${BIN_DIR}"
     ln -sfn "${WIFI_REPO_BIN}" "${WIFI_BIN}"
     ok "symlink: ${WIFI_BIN} -> ${WIFI_REPO_BIN}"
+
+    # Servicio oneshot: al boot, si PRIMARY no tiene IP tras 60s, activa
+    # SECONDARY. Una sola vez por arranque; no interfiere con runtime.
+    cat > /etc/systemd/system/wifi-setup-boot-select.service <<EOF_SVC
+[Unit]
+Description=wifi-setup boot-select (fallback de antena al arranque)
+After=NetworkManager.service
+Wants=NetworkManager.service
+ConditionPathExists=${WIFI_BIN}
+
+[Service]
+Type=oneshot
+ExecStart=${WIFI_BIN} radio boot-select
+RemainAfterExit=no
+
+[Install]
+WantedBy=multi-user.target
+EOF_SVC
+    chmod 644 /etc/systemd/system/wifi-setup-boot-select.service
+    systemctl daemon-reload 2>/dev/null || true
+    systemctl enable wifi-setup-boot-select 2>/dev/null || true
+    ok "servicio wifi-setup-boot-select habilitado (fallback de arranque)"
 
     # ---------------------------------------------------------------------
     # USB WiFi naming: copiar config y aplicar .link por MAC.

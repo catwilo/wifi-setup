@@ -81,7 +81,7 @@ read -r -p "Confirmas desinstalar wifi-setup? [s/N]: " CONFIRM
 # ---------------------------------------------------------------------------
 # 1. Unidades propias
 # ---------------------------------------------------------------------------
-for svc in wifi-setup-forward wifi-setup-client wifi-setup-lan; do
+for svc in wifi-setup-forward wifi-setup-client wifi-setup-lan wifi-setup-boot-select; do
     if systemctl list-unit-files "${svc}.service" >/dev/null 2>&1; then
         systemctl stop    "${svc}" 2>/dev/null || true
         systemctl disable "${svc}" 2>/dev/null || true
