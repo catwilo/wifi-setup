@@ -414,17 +414,22 @@ _cmd_networks() {
 
     _load nm radio networks
 
-    # Require_root por subcomando: lectura (list/show) no requiere,
-    # escritura si. import-iwd es read-only sobre iwd pero escribe la DB.
+    # La DB (networks.tsv) contiene PSKs en claro y vive con permisos
+    # 600 root:root. Todos los subcomandos -- incluidos list y show --
+    # requieren root para leerla con seguridad. Intentar sin root
+    # produciria "store vacio" enganoso (el archivo existe pero no es
+    # legible).
+    require_root
+
     case "${sub}" in
         list|"") nm_require; networks_list ;;
         show)    nm_require; networks_show "${1:-}" ;;
-        import-iwd) require_root; networks_import_from_iwd ;;
-        merge)   require_root; nm_require; networks_merge ;;
-        sync)    require_root; nm_require; networks_sync ;;
-        export)  require_root; networks_export "${1:-}" ;;
-        import)  require_root; networks_import "${1:-}" ;;
-        prune)   require_root; nm_require; networks_prune ;;
+        import-iwd) networks_import_from_iwd ;;
+        merge)   nm_require; networks_merge ;;
+        sync)    nm_require; networks_sync ;;
+        export)  networks_export "${1:-}" ;;
+        import)  networks_import "${1:-}" ;;
+        prune)   nm_require; networks_prune ;;
         *) _die "uso: wifi networks <list|show|merge|sync|import-iwd|export|import|prune>" ;;
     esac
 }

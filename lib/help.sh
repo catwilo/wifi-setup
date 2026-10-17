@@ -330,8 +330,9 @@ help_networks() {
     _help_cmd "  " "import <path>"     "mergea desde <path> (aditivo)"
     _help_cmd "  " "prune"             "elimina filas huerfanas (con confirmacion)"
     printf '\n'
+    _help_warn "todos los subcomandos requieren root (la DB contiene PSKs en claro)."
     _help_intro "import-iwd, export, import funcionan sin NM (util en fallback)."
-    _help_intro "show, prune y el resto requieren NM activo."
+    _help_intro "el resto requiere NM activo."
 }
 
 help_switch() {
