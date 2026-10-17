@@ -361,11 +361,16 @@ help_passwd() {
 }
 
 help_showpass() {
-    _help_title "wifi showpass -- PSK en claro de un perfil"
-    _help_usage "sudo wifi showpass <profile>"
+    _help_title "wifi showpass -- PSK en claro de un perfil o SSID"
+    _help_usage "sudo wifi showpass <perfil|ssid>"
     printf '\n'
-    _help_intro "Muestra la PSK guardada en el perfil NM (requiere --show-secrets,"
-    _help_intro "por eso root)."
+    _help_intro "Busca la PSK en tres fuentes, en este orden:"
+    _help_intro "  1. Perfil NM (si existe y NM esta corriendo)"
+    _help_intro "  2. DB (STATE_DIR/networks.tsv)"
+    _help_intro "  3. iwd (/var/lib/iwd/<ssid>.psk)"
+    printf '\n'
+    _help_intro "Funciona aunque NM este parado, si la red esta en la DB o en iwd."
+    printf '\n'
     _help_warn "la salida contiene la clave en claro: no la pegues en logs compartidos."
 }
 

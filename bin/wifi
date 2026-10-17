@@ -566,23 +566,48 @@ _passwd_resolve_profile() {
 _cmd_showpass() {
     _maybe_help showpass "$@"
 
-    _load nm
-    nm_require
+    _load nm networks
     require_root
 
-    local profile="${1:-}"
-    [[ -n "${profile}" ]] || _die "uso: wifi showpass <profile>"
+    local target="${1:-}"
+    [[ -n "${target}" ]] || _die "uso: wifi showpass <perfil|ssid>"
 
-    nm_con_exists "${profile}" || _die "perfil '${profile}' no existe"
-    local psk
-    psk="$(nmcli -s -g 802-11-wireless-security.psk con show "${profile}" 2>/dev/null || true)"
-    if [[ -n "${psk}" ]]; then
-        echo "perfil : ${profile}"
-        echo "psk    : ${psk}"
-    else
-        echo "perfil : ${profile}"
-        echo "psk    : (no disponible -- el perfil no expone la clave)"
+    # 1) Si es un perfil NM existente, leer de ahi (fuente autoritativa
+    #    cuando NM esta corriendo).
+    if systemctl is-active NetworkManager >/dev/null 2>&1 && nm_con_exists "${target}" 2>/dev/null; then
+        local psk
+        psk="$(nmcli -s -g 802-11-wireless-security.psk con show "${target}" 2>/dev/null | head -1 || true)"
+        if [[ -n "${psk}" ]]; then
+            echo "perfil : ${target}"
+            echo "fuente : NM"
+            echo "psk    : ${psk}"
+            return 0
+        fi
     fi
+
+    # 2) Si es un SSID en la DB, leer de ahi (funciona sin NM).
+    local db_psk
+    db_psk="$(_networks_psk_for_ssid "${target}" || true)"
+    if [[ -n "${db_psk}" ]]; then
+        echo "ssid   : ${target}"
+        echo "fuente : DB"
+        echo "psk    : ${db_psk}"
+        return 0
+    fi
+
+    # 3) Si es un SSID con .psk en iwd, leer de ahi.
+    if [[ -r "${IWD_DIR}/${target}.psk" ]]; then
+        local iwd_psk
+        iwd_psk="$(_iwd_psk_for_ssid "${target}" || true)"
+        if [[ -n "${iwd_psk}" ]]; then
+            echo "ssid   : ${target}"
+            echo "fuente : iwd"
+            echo "psk    : ${iwd_psk}"
+            return 0
+        fi
+    fi
+
+    _die "no encontrado: '${target}' (ni como perfil NM, ni en la DB, ni en iwd)"
 }
 
 # ---------------------------------------------------------------------------

@@ -201,6 +201,7 @@ networks_sync() {
 
     local line ssid psk iface auto prio _ts
     local applied=0 skipped=0
+    local -a applied_names=()
 
     while IFS= read -r line; do
         IFS=$'\t' read -r ssid psk iface auto prio _ts <<< "${line}"
@@ -247,9 +248,17 @@ networks_sync() {
         nm_con_set_autoconnect "${profile}" "${auto}" >/dev/null 2>&1 || true
         nm_con_set_priority "${profile}" "${prio}" >/dev/null 2>&1 || true
         applied=$((applied + 1))
+        applied_names+=("${profile}")
     done < <(_networks_store_rows)
 
     ok "networks: sync aplicado (${applied} creados/actualizados, ${skipped} sin cambios)"
+    if [[ "${applied}" -gt 0 ]]; then
+        info "perfiles aplicados:"
+        local _n
+        for _n in "${applied_names[@]}"; do
+            printf '  + %s\n' "${_n}" >&2
+        done
+    fi
 }
 
 # ---------------------------------------------------------------------------
@@ -268,22 +277,20 @@ networks_list() {
         return 0
     fi
 
-    printf '%-24s %-16s %-12s %-10s %s\n' \
-        "SSID" "IFACE" "AUTOCONNECT" "PRIORITY" "PERFIL NM"
-    printf '%s\n' "--------------------------------------------------------------------------------"
+    printf '%-24s %-10s %-6s %-6s %-6s %-6s\n' \
+        "SSID" "IFACE" "AUTO" "PRIO" "NM" "IWD"
+    printf '%s\n' "--------------------------------------------------------------------------"
 
-    local line ssid psk iface auto prio _ts profile exists
+    local line ssid psk iface auto prio _ts profile
+    local nm_ok iwd_ok
     while IFS= read -r line; do
         IFS=$'\t' read -r ssid psk iface auto prio _ts <<< "${line}"
         [[ -n "${ssid}" && -n "${iface}" ]] || continue
         profile="wifi-${iface}-${ssid}"
-        if nm_con_exists "${profile}"; then
-            exists="si"
-        else
-            exists="NO"
-        fi
-        printf '%-24s %-16s %-12s %-10s %s\n' \
-            "${ssid}" "${iface}" "${auto}" "${prio}" "${exists}"
+        if nm_con_exists "${profile}" 2>/dev/null; then nm_ok="si"; else nm_ok="NO"; fi
+        if [[ -r "${IWD_DIR}/${ssid}.psk" ]]; then iwd_ok="si"; else iwd_ok="NO"; fi
+        printf '%-24s %-10s %-6s %-6s %-6s %-6s\n' \
+            "${ssid}" "${iface}" "${auto}" "${prio}" "${nm_ok}" "${iwd_ok}"
     done < <(_networks_store_rows)
 }
 
