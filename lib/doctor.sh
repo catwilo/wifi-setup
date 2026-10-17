@@ -456,6 +456,9 @@ _doctor_summary() {
 _doctor_check_db() {
     _doctor_section "Coherencia DB <-> backends"
 
+    # IWD_DIR vive en networks.sh, que no se carga en el contexto del
+    # doctor. Default local para no requerir ese modulo (solo leemos).
+    local _iwd_dir="${IWD_DIR:-/var/lib/iwd}"
     local store="${STATE_DIR}/networks.tsv"
     if [[ ! -f "${store}" ]]; then
         _doctor_warn "DB no existe (${store}) -- corre: wifi networks merge"
@@ -474,7 +477,7 @@ _doctor_check_db() {
             nm_missing=$((nm_missing + 1))
             nm_missing_list+=("${_s}@${_i}")
         fi
-        if [[ ! -r "${IWD_DIR}/${_s}.psk" ]]; then
+        if [[ ! -r "${_iwd_dir}/${_s}.psk" ]]; then
             iwd_missing=$((iwd_missing + 1))
             iwd_missing_list+=("${_s}@${_i}")
         fi
