@@ -138,6 +138,10 @@ help_index() {
     _help_cmd "  " "sudo wifi networks merge"      "funde perfiles NM al store"
     _help_cmd "  " "sudo wifi networks sync"       "regenera perfiles NM desde el store"
     _help_cmd "  " "sudo wifi networks import-iwd" "importa las redes conocidas por iwd"
+    _help_cmd "  " "sudo wifi networks show <ssid>" "ficha completa de un SSID"
+    _help_cmd "  " "sudo wifi networks export <p>" "backup del store a <p>"
+    _help_cmd "  " "sudo wifi networks import <p>" "merge desde <p> (aditivo)"
+    _help_cmd "  " "sudo wifi networks prune"     "elimina filas huerfanas"
     _help_cmd "  " "sudo wifi switch <ssid>"       "cambia al perfil guardado"
     _help_cmd "  " "sudo wifi passwd <ssid|perfil>" "cambia PSK + reconecta"
     _help_cmd "  " "sudo wifi showpass <profile>"  "muestra PSK"
@@ -312,20 +316,22 @@ help_add() {
 
 help_networks() {
     _help_title "wifi networks -- store central de redes WiFi"
-    _help_usage "sudo wifi networks <list|merge|sync|import-iwd>"
+    _help_usage "sudo wifi networks <list|show|merge|sync|import-iwd|export|import|prune>"
     _help_intro ""
     _help_intro "Store: STATE_DIR/networks.tsv, una fila por (ssid, iface)."
     _help_intro "La PSK se guarda una vez por SSID y se propaga a todas las filas."
     printf '\n'
-    _help_cmd "  " "list"        "tabla unificada del store + presencia del perfil NM"
-    _help_cmd "  " "merge"       "funde perfiles NM actuales al store (aditivo)"
-    _help_cmd "  " "sync"        "regenera perfiles NM desde el store (idempotente)"
-    _help_cmd "  " "import-iwd"  "agrega al store las redes conocidas por iwd"
+    _help_cmd "  " "list"              "tabla del store + presencia del perfil NM"
+    _help_cmd "  " "show <ssid>"       "ficha completa de un SSID"
+    _help_cmd "  " "merge"             "funde perfiles NM actuales al store (aditivo)"
+    _help_cmd "  " "sync"              "regenera perfiles NM desde el store"
+    _help_cmd "  " "import-iwd"        "agrega al store las redes conocidas por iwd"
+    _help_cmd "  " "export <path>"     "copia el store a <path> (backup)"
+    _help_cmd "  " "import <path>"     "mergea desde <path> (aditivo)"
+    _help_cmd "  " "prune"             "elimina filas huerfanas (con confirmacion)"
     printf '\n'
-    _help_intro "import-iwd es read-only sobre iwd: lee /var/lib/iwd/*.psk y"
-    _help_intro "agrega filas al store (con la PSK), una por (ssid, iface) de"
-    _help_intro "cada antena presente. Util antes de 'wifi fallback off' para"
-    _help_intro "que NM herede las redes que armo iwctl a mano."
+    _help_intro "import-iwd, export, import funcionan sin NM (util en fallback)."
+    _help_intro "show, prune y el resto requieren NM activo."
 }
 
 help_switch() {

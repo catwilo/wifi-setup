@@ -468,3 +468,140 @@ networks_apply() {
     fi
     networks_apply_to_iwd
 }
+
+
+# ---------------------------------------------------------------------------
+# Gestion avanzada de la DB (criticos: show, export/import, prune).
+# ---------------------------------------------------------------------------
+
+# networks_show <ssid> -- ficha completa del SSID.
+# Muestra: PSK, filas por antena, prioridad, autoconnect, si el perfil
+# existe en NM, y si el .psk existe en iwd. Una vista para diagnosticar
+# sin correr 3 comandos.
+networks_show() {
+    local ssid="$1"
+    [[ -f "${NETWORKS_STORE}" ]] || { warn "DB vacia -- corre: wifi networks merge"; return 1; }
+
+    local line _s _p _i _a _pr _ts
+    local psk="" found=0
+    local -a rows=()
+    while IFS= read -r line; do
+        IFS=$'\t' read -r _s _p _i _a _pr _ts <<< "${line}"
+        [[ "${_s}" == "${ssid}" ]] || continue
+        found=1
+        [[ -n "${psk}" ]] || psk="${_p}"
+        rows+=("${_i}"$'\t'"${_a}"$'\t'"${_pr}")
+    done < <(_networks_store_rows)
+
+    if [[ "${found}" -eq 0 ]]; then
+        warn "SSID '${ssid}' no esta en la DB"
+        return 1
+    fi
+
+    echo "SSID: ${ssid}"
+    echo "PSK : ${psk:-<sin PSK>}"
+    echo ""
+    printf '  %-10s %-8s %-6s %-8s %-6s\n' "IFACE" "AUTO" "PRIO" "NM" "IWD"
+    local _if _auto _prio nm_ok iwd_ok
+    for row in "${rows[@]}"; do
+        IFS=$'\t' read -r _if _auto _prio <<< "${row}"
+        if nm_con_exists "wifi-${_if}-${ssid}" 2>/dev/null; then nm_ok="si"; else nm_ok="NO"; fi
+        if [[ -r "${IWD_DIR}/${ssid}.psk" ]]; then iwd_ok="si"; else iwd_ok="NO"; fi
+        printf '  %-10s %-8s %-6s %-8s %-6s\n' "${_if}" "${_auto}" "${_prio}" "${nm_ok}" "${iwd_ok}"
+    done
+}
+
+# networks_export <path> -- copia la DB a <path>. Preserva permisos.
+networks_export() {
+    local path="$1"
+    [[ -n "${path}" ]] || { err "uso: networks_export <path>"; return 1; }
+    [[ -f "${NETWORKS_STORE}" ]] || { err "DB no existe -- corre: wifi networks merge"; return 1; }
+    cp -f "${NETWORKS_STORE}" "${path}" || { err "no se pudo exportar a ${path}"; return 1; }
+    chmod 600 "${path}" 2>/dev/null || true
+    ok "DB exportada a ${path} ($(wc -l < "${path}") lineas)"
+}
+
+# networks_import <path> -- merge desde <path>. Aditivo: no borra filas
+# existentes; solo agrega las que no estan (por (ssid, iface)).
+networks_import() {
+    local path="$1"
+    [[ -n "${path}" ]] || { err "uso: networks_import <path>"; return 1; }
+    [[ -r "${path}" ]] || { err "archivo no legible: ${path}"; return 1; }
+    _networks_store_init
+
+    local out; out="$(mktemp "${TMPDIR:-/tmp}/wifi-tsv.XXXXXX")"
+
+    # Un solo awk: lee la DB actual (FNR==NR) y el archivo a importar.
+    # Emite todo (DB actual) + solo las (ssid, iface) nuevas del archivo.
+    # Portable: split por TAB con -F'\t'. Escribe a <out>.
+    awk -F'\t' '
+        FNR==NR {
+            print
+            if ($0 !~ /^#/ && NF>=3) seen[$1"\x1f"$3]=1
+            next
+        }
+        /^#/ { next }
+        NF<3 { next }
+        !($1"\x1f"$3 in seen) {
+            print
+            seen[$1"\x1f"$3]=1
+            added++
+        }
+        END { printf "%d", added+0 > "/dev/stderr" }
+    ' "${NETWORKS_STORE}" "${path}" > "${out}" 2> "${out}.n"
+
+    local added
+    added="$(cat "${out}.n" 2>/dev/null || echo 0)"
+    mv "${out}" "${NETWORKS_STORE}"
+    rm -f "${out}.n"
+    chmod 600 "${NETWORKS_STORE}"
+    ok "DB importada desde ${path} (${added} fila(s) nuevas)"
+}
+
+# networks_prune -- elimina filas del TSV cuyo SSID ya no existe en ningun
+# backend (ni perfil NM ni .psk en iwd). Con confirmacion explicita.
+networks_prune() {
+    [[ -f "${NETWORKS_STORE}" ]] || { warn "DB vacia"; return 0; }
+    local tmp; tmp="$(mktemp "${TMPDIR:-/tmp}/wifi-tsv.XXXXXX")"
+    grep '^#' "${NETWORKS_STORE}" > "${tmp}" || true
+
+    local line _s _p _i _a _pr _ts
+    local kept=0 dropped=0
+    local -a drop_list=()
+    while IFS= read -r line; do
+        IFS=$'\t' read -r _s _p _i _a _pr _ts <<< "${line}"
+        [[ -n "${_s}" && -n "${_i}" ]] || continue
+        local has_nm=0 has_iwd=0
+        if nm_con_exists "wifi-${_i}-${_s}" 2>/dev/null; then has_nm=1; fi
+        if [[ -r "${IWD_DIR}/${_s}.psk" ]]; then has_iwd=1; fi
+        if [[ "${has_nm}" -eq 1 || "${has_iwd}" -eq 1 ]]; then
+            printf '%s\n' "${line}" >> "${tmp}"
+            kept=$((kept + 1))
+        else
+            drop_list+=("${_s} (${_i})")
+            dropped=$((dropped + 1))
+        fi
+    done < <(_networks_store_rows)
+
+    if [[ "${dropped}" -eq 0 ]]; then
+        info "nada que podar (${kept} fila(s) validas)"
+        rm -f "${tmp}"
+        return 0
+    fi
+
+    echo "filas huerfanas a eliminar (${dropped}):"
+    local d
+    for d in "${drop_list[@]}"; do
+        printf '  - %s\n' "${d}"
+    done
+    read -r -p "confirmar prune? [s/N]: " _ans
+    if [[ ! "${_ans}" =~ ^[sS]$ ]]; then
+        info "cancelado -- DB intacta"
+        rm -f "${tmp}"
+        return 0
+    fi
+
+    mv "${tmp}" "${NETWORKS_STORE}"
+    chmod 600 "${NETWORKS_STORE}"
+    ok "DB podada: ${dropped} eliminadas, ${kept} conservadas"
+}
