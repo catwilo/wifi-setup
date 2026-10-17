@@ -292,7 +292,7 @@ _cmd_radio() {
                 list)          radio_list ;;
                 primary)       radio_set_primary   "${1:-}" ;;
                 secondary)     radio_set_secondary "${1:-}" ;;
-                use)           radio_use           "${1:-}" ;;
+                use)           radio_use           "$@" ;;
                 clear-session) radio_clear_session ;;
                 up)            radio_up   "$@" ;;
                 down)          radio_down "$@" ;;
