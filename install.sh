@@ -74,6 +74,7 @@ _root_phase() {
     source "${SCRIPT_DIR}/lib/radio.sh"
     source "${SCRIPT_DIR}/lib/vpn.sh"
     source "${SCRIPT_DIR}/lib/ssh.sh"
+    source "${SCRIPT_DIR}/lib/fallback.sh"
 
     # ---------------------------------------------------------------------
     # BASE_DIR: crear YA con dueno del usuario real. Si el script falla

@@ -39,39 +39,78 @@ _fallback_svc_snapshot() {
 # falta la directiva. Preserva el resto de la config del usuario.
 _fallback_ensure_iwd_netconf() {
     local conf="/etc/iwd/main.conf"
+    local tmp
     mkdir -p /etc/iwd
+    tmp="$(mktemp "${conf}.XXXXXX")"
 
-    # Directivas que iwd necesita para ser autonomo:
-    #   [General]      EnableNetworkConfiguration=true  -> DHCP integrado
-    #   [Network]      NameResolvingService=none        -> no toca resolv.conf
-    #                                                     (Tailscale lo maneja)
-    #   [DriverQuirks] DefaultInterface=?*              -> no destruye la
-    #                                                     iface al pararse
-    #                                                     (?* = cualquier
-    #                                                     driver)
+    # Reescribe main.conf COMPLETO de forma atomica. Motivo: 'fallback on'
+    # dos veces seguidas dejaba dos secciones [General] (la primera vacia);
+    # iwd lee solo la primera y descarta la segunda, perdiendo
+    # EnableNetworkConfiguration -> DHCP integrado apagado -> usuario
+    # forzado a dhcpcd manual.
     #
-    # Enfoque idempotente por construccion:
-    #   1. Borrar cualquier linea previa de esas 3 claves (cubre valores
-    #      invalidos como DefaultInterface=true que un sed manual dejo).
-    #   2. Append un bloque canonico al final.
-    # Resultado: siempre exactamente un valor por clave, siempre correcto.
-    if [[ -s "${conf}" ]]; then
-        sed -i -E '/^[[:space:]]*(EnableNetworkConfiguration|NameResolvingService|DefaultInterface)[[:space:]]*=/d' "${conf}"
+    # Algoritmo: parsear bloques [Seccion]; eliminar toda clave gestionada
+    # (donde este); eliminar secciones gestionadas que queden vacias;
+    # agregar el bloque canonico UNA vez al final; escribir atomico.
+    python3 - "${conf}" "${tmp}" <<'PY_IWD_CONF'
+import os, sys
+
+src, dst = sys.argv[1], sys.argv[2]
+MANAGED = {"EnableNetworkConfiguration", "NameResolvingService", "DefaultInterface"}
+SECTIONS = {"General", "Network", "DriverQuirks"}
+
+blocks = []
+cur_name, cur_lines = None, []
+if os.path.exists(src):
+    with open(src, "r", encoding="utf-8", errors="replace") as f:
+        for raw in f:
+            line = raw.rstrip("\n")
+            s = line.strip()
+            if s.startswith("[") and s.endswith("]"):
+                if cur_name is not None or cur_lines:
+                    blocks.append((cur_name, cur_lines))
+                cur_name, cur_lines = s[1:-1].strip(), []
+            else:
+                cur_lines.append(line)
+    if cur_name is not None or cur_lines:
+        blocks.append((cur_name, cur_lines))
+
+kept = []
+for name, lines in blocks:
+    if name in SECTIONS:
+        lines = [
+            l for l in lines
+            if l.strip() and l.strip().split("=", 1)[0].strip() not in MANAGED
+        ]
+        if not any(l.strip() for l in lines):
+            continue
+    kept.append((name, lines))
+
+kept.append(("General", ["EnableNetworkConfiguration=true"]))
+kept.append(("Network", ["NameResolvingService=none"]))
+kept.append(("DriverQuirks", ["DefaultInterface=?*"]))
+
+with open(dst, "w", encoding="utf-8") as f:
+    for name, lines in kept:
+        if name is not None:
+            f.write("[%s]\n" % name)
+        for l in lines:
+            f.write(l + "\n")
+PY_IWD_CONF
+
+    if [[ ! -s "${tmp}" ]]; then
+        rm -f "${tmp}"
+        err "iwd: no se pudo generar main.conf canonico"
+        return 1
     fi
-
-    local _sep=""
-    [[ -s "${conf}" ]] && _sep=$'\n'
-    {
-        printf '%s' "${_sep}"
-        printf '[General]\n'
-        printf 'EnableNetworkConfiguration=true\n'
-        printf '\n[Network]\n'
-        printf 'NameResolvingService=none\n'
-        printf '\n[DriverQuirks]\n'
-        printf 'DefaultInterface=?*\n'
-    } >> "${conf}"
-
-    ok "iwd: main.conf con directivas canonicas (DHCP + DNS=none + quirk ?*)"
+    chmod 644 "${tmp}"
+    if [[ -f "${conf}" ]] && cmp -s "${tmp}" "${conf}"; then
+        rm -f "${tmp}"
+        ok "iwd: main.conf ya canonico (sin cambios)"
+        return 0
+    fi
+    mv "${tmp}" "${conf}"
+    ok "iwd: main.conf canonico (un solo bloque por clave)"
     return 0
 }
 

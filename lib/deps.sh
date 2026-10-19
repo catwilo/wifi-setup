@@ -64,15 +64,13 @@ install_deps() {
     systemctl disable iwd            >/dev/null 2>&1 || true
     systemctl stop    iwd            >/dev/null 2>&1 || true
 
-    # Preparar iwd para fallback: DHCP integrado declarado en main.conf
-    # para que cuando 'wifi fallback on' active iwd, no haga falta un paso
-    # manual previo. Idempotente: solo agrega la directiva si falta.
-    mkdir -p /etc/iwd
-    if [[ ! -s /etc/iwd/main.conf ]] \
-       || ! grep -qE '^[[:space:]]*EnableNetworkConfiguration[[:space:]]*=' /etc/iwd/main.conf; then
-        printf '\n[General]\nEnableNetworkConfiguration=true\n' >> /etc/iwd/main.conf
-        info "iwd: DHCP integrado habilitado en /etc/iwd/main.conf (fallback listo)"
-    fi
+    # Preparar iwd para fallback: main.conf canonico con DHCP integrado
+    # declarado. Delega en _fallback_ensure_iwd_netconf (fallback.sh) para
+    # que instalacion y runtime usen EXACTAMENTE la misma rutina atomica.
+    # Sin esta unificacion, una instalacion sobre un main.conf ya corrupto
+    # (dos [General], la primera vacia) no se repara y el fallback queda
+    # con DHCP apagado hasta dhcpcd manual.
+    _fallback_ensure_iwd_netconf
     systemctl stop    iwd            >/dev/null 2>&1 || true
 
     ok "dependencias instaladas"
