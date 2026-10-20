@@ -151,6 +151,7 @@ _cmd_status() {
     _maybe_help status "$@"
 
     _load nm radio
+    _radio_load_state
     # status es lectura: funciona con NM o con iwd (fallback), sin root.
 
     section "Gestor WiFi"
@@ -179,12 +180,15 @@ _cmd_status() {
 
     section "Antenas WiFi (red conectada por antena)"
     local _p _if _found=0
-    printf '  %-10s %-10s %-24s %s\n' "IFACE" "ESTADO" "RED" "IP" >&2
+    printf '  %-10s %-10s %-10s %-24s %s\n' "IFACE" "ROL" "ESTADO" "RED" "IP" >&2
     for _p in /sys/class/net/*/wireless; do
         [ -d "$_p" ] || continue
         _found=1
         _if="${_p%/wireless}"; _if="${_if##*/}"
-        local _state _net _ip
+        local _state _net _ip _rol
+        _rol=""
+        [[ "${_if}" == "${RADIO_PRIMARY:-}"   ]] && _rol="primary"
+        [[ "${_if}" == "${RADIO_SECONDARY:-}" ]] && _rol="secondary"
         _state="$(cat "/sys/class/net/${_if}/operstate" 2>/dev/null || echo "?")"
         _ip="$(ip -4 -o addr show "${_if}" 2>/dev/null | awk '{print $4}' | head -1)"
 
@@ -206,8 +210,8 @@ _cmd_status() {
             _net="$(iwctl station "${_if}" show 2>/dev/null \
                 | awk -F'  +' '/Connected network/ {print $3; exit}')"
         fi
-        printf '  %-10s %-10s %-24s %s\n' \
-            "${_if}" "${_state}" "${_net:--}" "${_ip:--}" >&2
+        printf '  %-10s %-10s %-10s %-24s %s\n' \
+            "${_if}" "${_rol}" "${_state}" "${_net:--}" "${_ip:--}" >&2
     done
     [ "${_found}" -eq 1 ] || warn "no se detectaron antenas WiFi en el kernel"
 
@@ -231,14 +235,6 @@ _cmd_status() {
 ' "${_auto}"
         printf '  NO autoconectadas:  %d
 ' "${_noauto}"
-    fi
-
-    section "LAN"
-    source "${LIB_DIR}/lan.sh"
-    if [ "$_mgr" = "NetworkManager" ]; then
-        lan_status 2>&1 || true
-    else
-        echo "  (perfil LAN gestionado por NM -- no aplica con $_mgr)"
     fi
 
     section "Internet"
@@ -276,7 +272,7 @@ _cmd_radio() {
     shift || true
     [[ -n "${sub}" ]] || _die "uso: wifi radio <list|primary|secondary|use|clear-session|up|down> [args]"
 
-    _load nm radio
+    _load nm radio networks
     require_root
 
     # boot-install/boot-uninstall no tocan nmcli: funcionan aunque NM

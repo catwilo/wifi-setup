@@ -324,21 +324,21 @@ _root_phase() {
     ln -sfn "${WIFI_REPO_BIN}" "${WIFI_BIN}"
     ok "symlink: ${WIFI_BIN} -> ${WIFI_REPO_BIN}"
 
-    # Servicio oneshot: al boot, si PRIMARY no tiene IP tras 60s, activa
+    # Servicio oneshot: al boot, si PRIMARY no tiene IP tras
+    # NetworkManager-wait-online (sin polling ni sleep), activa
     # SECONDARY. Una sola vez por arranque; no interfiere con runtime.
     cat > /etc/systemd/system/wifi-setup-boot-select.service <<EOF_SVC
 [Unit]
 Description=wifi-setup boot-select (fallback de antena al arranque)
-After=NetworkManager.service
-Wants=NetworkManager.service
+After=NetworkManager.service NetworkManager-wait-online.service
+Wants=NetworkManager.service NetworkManager-wait-online.service
 ConditionPathExists=${WIFI_BIN}
 
 [Service]
 Type=oneshot
 ExecStart=${WIFI_BIN} radio boot-select
 RemainAfterExit=no
-# boot-select espera 60s a PRIMARY y luego conecta SECONDARY (puede
-# tardar otros 30-60s). Default de systemd es 90s: insuficiente.
+# Sin polling ni sleep: systemd espera a NM via wait-online.
 TimeoutStartSec=180
 
 [Install]
