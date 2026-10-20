@@ -170,7 +170,6 @@ help_index() {
     _help_cmd "  " "sudo wifi lan remove"          "borra perfil LAN"
 
     _help_cat VPN "VPN (Tailscale)"
-    _help_cmd "  " "sudo wifi vpn install"         "instala + daemon (sin conectar)"
     _help_cmd "  " "sudo wifi vpn up"              "conecta"
     _help_cmd "  " "sudo wifi vpn up --routes 1.2.3.0/24" "conecta + anuncia subred"
     _help_cmd "  " "sudo wifi vpn up --advertise-exit-node" "conecta + exit node"
@@ -252,8 +251,6 @@ help_radio() {
     _help_cmd "  " "clear-session"       "olvida override de sesion"
     _help_cmd "  " "up <iface> [--persist]" "activa la antena (autoconnect on con --persist)"
     _help_cmd "  " "down <iface> [--persist]" "desactiva la antena (autoconnect off con --persist)"
-    _help_cmd "  " "boot-install"       "instala el servicio de fallback de arranque"
-    _help_cmd "  " "boot-uninstall"     "remueve el servicio de fallback de arranque"
     _help_cmd "  " "boot-select"        "fallback de arranque (interno, lo corre systemd)"
     printf '\n'
     _help_intro "Modelo: PRIMARY/SECONDARY solo controlan la prioridad de ruta;"

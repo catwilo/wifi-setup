@@ -275,12 +275,7 @@ _cmd_radio() {
     _load nm radio networks
     require_root
 
-    # boot-install/boot-uninstall no tocan nmcli: funcionan aunque NM
-    # este parado (util cuando estas en fallback y necesitas reinstalar
-    # el servicio tras un pull). El resto si requiere NM.
     case "${sub}" in
-        boot-install)   radio_boot_install ;;
-        boot-uninstall) radio_boot_uninstall ;;
         boot-select)    radio_boot_select ;;
         *)
             nm_require
@@ -989,7 +984,6 @@ _cmd_vpn() {
 
     _load vpn
     case "${sub}" in
-        install) require_root; vpn_install ;;
         up)      require_root; vpn_up "$@" ;;
         down)    require_root; vpn_down ;;
         status)  vpn_status ;;

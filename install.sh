@@ -99,7 +99,7 @@ _root_phase() {
     # ---------------------------------------------------------------------
     # Pre-check de idempotencia: si TODO esta ya aplicado, no re-ejecutar.
     # ---------------------------------------------------------------------
-    local _idem_nm="" _idem_iwd="" _idem_dhcpcd="" _idem_symlink="" _idem_state=""
+    local _idem_nm="" _idem_iwd="" _idem_dhcpcd="" _idem_symlink="" _idem_state="" _idem_boot=""
     local _idem_ok=1
 
     if systemctl is-active NetworkManager >/dev/null 2>&1; then
@@ -133,6 +133,17 @@ _root_phase() {
         _idem_ok=0
     fi
 
+    # Unit de boot-select: si no existe o no declara wait-online, el
+    # install no es idempotente -- se regenera al reejecutar.
+    local _boot_unit="/etc/systemd/system/wifi-setup-boot-select.service"
+    if [[ -f "${_boot_unit}" ]] \
+       && grep -q 'NetworkManager-wait-online.service' "${_boot_unit}"; then
+        _idem_boot="OK"
+    else
+        _idem_boot="pendiente"
+        _idem_ok=0
+    fi
+
     if [[ "${_idem_ok}" -eq 1 ]]; then
         ok "wifi-setup ya instalado -- nada que hacer"
         info "  NetworkManager: ${_idem_nm}"
@@ -140,6 +151,7 @@ _root_phase() {
         info "  dhcpcd:         ${_idem_dhcpcd}"
         info "  symlink:        ${_idem_symlink}"
         info "  install.state:  ${_idem_state}"
+        info "  boot-select:    ${_idem_boot}"
         info ""
         info "para forzar reinstalacion completa: borra ${STATE_DIR}/install.state y vuelve a correr"
         return 0
