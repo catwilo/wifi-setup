@@ -57,7 +57,7 @@ vpn_install() {
 # ---------------------------------------------------------------------------
 vpn_up() {
     command -v tailscale >/dev/null 2>&1 \
-        || die "tailscale no instalado -- corre: wifi install"
+        || die "tailscale no instalado -- corre: sudo bash ${SCRIPTS_DIR}/install.sh"
 
     systemctl is-active tailscaled >/dev/null 2>&1 \
         || systemctl start tailscaled 2>/dev/null \

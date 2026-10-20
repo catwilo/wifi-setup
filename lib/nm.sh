@@ -17,7 +17,7 @@
 # ---------------------------------------------------------------------------
 nm_require() {
     command -v nmcli >/dev/null 2>&1 \
-        || die "NetworkManager no instalado -- corre: sudo wifi install"
+        || die "NetworkManager no instalado -- corre: sudo bash ${SCRIPTS_DIR}/install.sh"
     if systemctl is-active NetworkManager >/dev/null 2>&1; then
         return 0
     fi

@@ -21,7 +21,7 @@ source "${SCRIPT_DIR}/lib/common.sh"
 
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
     cat <<'HELP'
-uso: sudo wifi uninstall
+uso: sudo bash uninstall.sh
 
 Desinstala wifi-setup:
   · detiene units wifi-setup-{forward,client,lan}

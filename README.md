@@ -8,7 +8,7 @@ perfiles y prioridades independientes por antena.
 
 ## Instalacion
 
-    sudo wifi install
+    sudo bash install.sh
 
 Auto-detecta antenas (USB=PRIMARY, nativa=SECONDARY), pregunta SSID/PSK
 si no hay perfiles previos, y deja NM como gestor de red, iwd como
@@ -149,9 +149,9 @@ Cada subcomando acepta `-h`/`--help` para su ayuda detallada:
 
 ### Instalacion
 
-    sudo wifi install            instala NM, perfiles, hardening, tailscale
-    sudo wifi uninstall          desinstala (iwd queda instalado, parado)
-    sudo wifi check              verifica estado post-install
+    sudo bash install.sh         instala NM, perfiles, hardening, tailscale
+    sudo bash uninstall.sh       desinstala (iwd queda instalado, parado)
+    sudo bash checks.sh          verifica estado post-install
 
 ## Modelo
 
@@ -173,7 +173,7 @@ Cada subcomando acepta `-h`/`--help` para su ayuda detallada:
 
 ## Diagnostico
 
-    wifi check                   verificacion post-install con PASS/FAIL
+    bash checks.sh               verificacion post-install con PASS/FAIL
     sudo wifi doctor             reporte del stack (read-only)
     sudo wifi doctor --fix       aplica fixes seguros automaticamente
 

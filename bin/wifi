@@ -126,25 +126,6 @@ _maybe_help() {
 }
 
 # ---------------------------------------------------------------------------
-# install / uninstall / check -- entrypoints separados.
-# ---------------------------------------------------------------------------
-_cmd_install() {
-    _maybe_help install "$@"
-
-    exec bash "${SCRIPTS_DIR}/install.sh" "$@"
-}
-_cmd_uninstall() {
-    _maybe_help uninstall "$@"
-
-    exec bash "${SCRIPTS_DIR}/uninstall.sh" "$@"
-}
-_cmd_check() {
-    _maybe_help check "$@"
-
-    exec bash "${SCRIPTS_DIR}/checks.sh" "$@"
-}
-
-# ---------------------------------------------------------------------------
 # status
 # ---------------------------------------------------------------------------
 _cmd_status() {
@@ -965,7 +946,7 @@ _cmd_usb_names() {
             nm_usb_names_apply "${cfg}"
             ;;
         edit)
-            [[ -f "${cfg}" ]] || { _die "no existe ${cfg} -- corre wifi install primero"; }
+            [[ -f "${cfg}" ]] || { _die "no existe ${cfg} -- corre: sudo bash ${SCRIPTS_DIR}/install.sh primero"; }
             "${EDITOR:-vi}" "${cfg}"
             info "re-aplica con: wifi usb-names apply"
             ;;
@@ -1044,9 +1025,6 @@ CMD="${1:-help}"
 shift || true
 
 case "${CMD}" in
-    install)         _cmd_install "$@" ;;
-    uninstall|remove) _cmd_uninstall "$@" ;;
-    check|verify)    _cmd_check "$@" ;;
     status)          _cmd_status "$@" ;;
     ifaces)          _cmd_ifaces "$@" ;;
     radio)           _cmd_radio "$@" || exit $? ;;

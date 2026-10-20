@@ -193,10 +193,6 @@ help_index() {
     _help_cmd "  " "sudo wifi fallback off"        "vuelve a NetworkManager"
     _help_cmd "  " "wifi fallback status"          "quien esta al mando"
 
-    _help_cat STATE "INSTALACION"
-    _help_cmd "  " "sudo wifi install"             "instala NM, perfiles, hardening, tailscale"
-    _help_cmd "  " "sudo wifi uninstall"           "desinstala (iwd queda instalado, parado)"
-    _help_cmd "  " "sudo wifi check"               "verifica estado post-install"
 
     printf '\n'
 }
@@ -539,45 +535,6 @@ help_fallback() {
     _help_intro "tocar nada; 'off' restaura el estado original."
     _help_note "conecta con iwd: iwctl station <iface> connect <ssid>"
     _help_note "scan con iwd:   iwctl station <iface> scan"
-}
-
-help_install() {
-    _help_title "wifi install -- instalacion del stack"
-    _help_usage "sudo wifi install"
-    printf '\n'
-    _help_intro "Auto-detecta antenas (USB=PRIMARY, nativa=SECONDARY), pregunta"
-    _help_intro "SSID/PSK si no hay perfiles previos, y deja:"
-    printf '  %s- NetworkManager%s como gestor de red\n' "${H_KEY}" "${H_RESET}"
-    printf '  %s- iwd%s instalado y parado (fallback manual)\n' "${H_KEY}" "${H_RESET}"
-    printf '  %s- perfiles WiFi%s por antena con prioridad\n' "${H_KEY}" "${H_RESET}"
-    printf '  %s- SSH%s hardened en puerto 22\n' "${H_KEY}" "${H_RESET}"
-    printf '  %s- Tailscale%s instalado y apagado\n' "${H_KEY}" "${H_RESET}"
-    printf '\n'
-    _help_intro "El cable LAN NO se configura: usa 'wifi lan setup' cuando lo necesites."
-    _help_intro "Relaunch en tmux para sobrevivir cortes de SSH durante el install."
-}
-
-help_uninstall() {
-    _help_title "wifi uninstall -- desinstalar el stack"
-    _help_usage "sudo wifi uninstall"
-    printf '\n'
-    _help_intro "Revierte el install sin tocar los perfiles NM. iwd queda"
-    _help_intro "instalado y parado; NM se deja como estaba."
-    _help_warn "revisa el resumen final para confirmar que no quedo ningun servicio activo."
-}
-
-help_check() {
-    _help_title "wifi check -- verificacion post-install"
-    _help_usage "sudo wifi check"
-    printf '\n'
-    _help_intro "Chequeos PASS/FAIL con hint de causa/fix:"
-    printf '  %s- NM%s  activo + habilitado en boot\n' "${H_KEY}" "${H_RESET}"
-    printf '  %s- antenas%s  visibles por NM y estado\n' "${H_KEY}" "${H_RESET}"
-    printf '  %s- conectividad%s  IP, ping, DNS\n' "${H_KEY}" "${H_RESET}"
-    printf '  %s- SSH%s  sshd activo, puerto 22 escuchando\n' "${H_KEY}" "${H_RESET}"
-    printf '  %s- iwd%s  parado (fallback listo)\n' "${H_KEY}" "${H_RESET}"
-    printf '  %s- tailscale%s  instalado, daemon, conexion\n' "${H_KEY}" "${H_RESET}"
-    printf '  %s- LAN%s  estado (informativo)\n' "${H_KEY}" "${H_RESET}"
 }
 
 help_version() {

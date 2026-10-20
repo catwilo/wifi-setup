@@ -12,7 +12,7 @@ source "${SCRIPT_DIR}/lib/nm.sh"
 
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
     cat <<'HELP'
-uso: sudo wifi check
+uso: sudo bash checks.sh
 
 Verifica que el stack wifi-setup este operativo:
   · NetworkManager activo

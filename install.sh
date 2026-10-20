@@ -36,7 +36,7 @@ source "${SCRIPT_DIR}/lib/common.sh"
 # ---------------------------------------------------------------------------
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
     cat <<'HELP'
-uso: sudo wifi install
+uso: sudo bash install.sh
 
 Instala wifi-setup. Auto-detecta antenas (nativa + USB), pregunta SSID y
 PSK solo si no existe config previa, y deja:
