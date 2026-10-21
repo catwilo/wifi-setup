@@ -27,3 +27,4 @@ setup() { setup_env; }
     run shellcheck -x install.sh uninstall.sh checks.sh bin/wifi lib/*.sh
     [ "$status" -eq 0 ] || { echo "$output" >&3; return 1; }
 }
+

@@ -41,6 +41,8 @@ PASS=0
 FAIL=0
 for f in "${FILES[@]}"; do
     fname="$(basename "$f")"
+    tap_file="$(mktemp "${TMPDIR:-/tmp}/bats-tap.XXXXXX")"
+    "$BATS" --tap "$f" > "$tap_file"
     while IFS= read -r line; do
         case "$line" in
             ok\ *)
@@ -59,7 +61,8 @@ for f in "${FILES[@]}"; do
                 printf '           %s%s%s\n' "$DIM" "${line#\# }" "$RESET"
                 ;;
         esac
-    done < <("$BATS" --tap "$f" 2>&1)
+    done < "$tap_file"
+    rm -f "$tap_file"
 done
 
 printf '\n[INFO] %d passed, %d failed, %d total\n' "$PASS" "$FAIL" "$TOTAL"

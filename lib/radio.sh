@@ -579,13 +579,13 @@ radio_boot_select() {
     # Elegir el SSID de SECONDARY con mayor prioridad en la DB (una sola
     # pasada de awk: sin sort/head/cut).
     local best_ssid
-    best_ssid="$(_networks_store_rows | awk -F'\t' -v i="${secondary}" '
+    best_ssid="$(awk -F'\t' -v i="${secondary}" '
         $3==i && $2!="" {
             prio = $5+0
             if (prio > max) { max = prio; best = $1 }
         }
         END { print best }
-    ')"
+    ' <(_networks_store_rows))"
 
     if [[ -z "${best_ssid}" ]]; then
         err "boot-select: sin perfiles para ${secondary} en la DB"

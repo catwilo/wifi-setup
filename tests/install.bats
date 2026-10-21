@@ -76,3 +76,8 @@ setup() { setup_env; }
         [ ! -e "$REPO/lib/$f" ] || { echo "residuo: lib/$f" >&3; return 1; }
     done
 }
+
+@test "install.sh: unit boot-select declara NetworkManager-wait-online" {
+    run grep -q 'NetworkManager-wait-online.service' "$INSTALL"
+    [ "$status" -eq 0 ]
+}

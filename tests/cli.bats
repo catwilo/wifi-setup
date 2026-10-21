@@ -18,15 +18,15 @@ setup() { setup_env; }
 @test "entrypoints --help: exit 0 con texto de uso" {
     run bash "$INSTALL" --help
     [ "$status" -eq 0 ]
-    [[ "$output" == *"uso: sudo wifi install"* ]]
+    [[ "$output" == *"uso: sudo bash install.sh"* ]]
 
     run bash "$UNINSTALL" --help
     [ "$status" -eq 0 ]
-    [[ "$output" == *"uso: sudo wifi uninstall"* ]]
+    [[ "$output" == *"uso: sudo bash uninstall.sh"* ]]
 
     run bash "$CHECKS" --help
     [ "$status" -eq 0 ]
-    [[ "$output" == *"uso: sudo wifi check"* ]]
+    [[ "$output" == *"uso: sudo bash checks.sh"* ]]
 }
 
 @test "bin/wifi --help: exit 0 con la ayuda completa" {
@@ -83,4 +83,9 @@ setup() { setup_env; }
             return 1
         fi
     done <<< "$subs"
+}
+
+@test "bin/wifi: sin dispatches de instalacion (install/uninstall/check)" {
+    run grep -E '^[[:space:]]+_cmd_(install|uninstall|check)\(\)' "$WIFI"
+    [ "$status" -ne 0 ]
 }

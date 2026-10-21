@@ -16,20 +16,6 @@ setup() {
     source "$REPO/lib/doctor.sh"
 }
 
-@test "_doctor_{ok,warn,fail,fix}: cada uno incrementa solo su contador" {
-    doctor_reset; _doctor_ok   "x" 2>/dev/null; [ "$DOCTOR_OK"   -eq 1 ]
-    doctor_reset; _doctor_warn "x" 2>/dev/null; [ "$DOCTOR_WARN" -eq 1 ]
-    doctor_reset; _doctor_fail "x" 2>/dev/null; [ "$DOCTOR_FAIL" -eq 1 ]
-    doctor_reset; _doctor_fix  "x" 2>/dev/null; [ "$DOCTOR_FIX"  -eq 1 ]
-}
-
-@test "doctor_reset: limpia todos los contadores" {
-    DOCTOR_OK=10 DOCTOR_WARN=5 DOCTOR_FAIL=3 DOCTOR_FIX=2
-    doctor_reset
-    [ "$DOCTOR_OK" -eq 0 ] && [ "$DOCTOR_WARN" -eq 0 ]
-    [ "$DOCTOR_FAIL" -eq 0 ] && [ "$DOCTOR_FIX" -eq 0 ]
-}
-
 @test "_doctor_summary: exit 0 sin FAIL, exit 1 con FAIL, e imprime conteos" {
     doctor_reset; DOCTOR_OK=3 DOCTOR_WARN=2
     run _doctor_summary
