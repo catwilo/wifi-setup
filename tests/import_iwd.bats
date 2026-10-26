@@ -35,16 +35,16 @@ setup() {
     source "$REPO/lib/networks.sh"
 }
 
-@test "networks_import_from_iwd: iwd vacio no agrega filas" {
-    run networks_import_from_iwd
+@test "networks_pull_iwd: iwd vacio no agrega filas" {
+    run networks_pull_iwd
     [ "$status" -eq 0 ]
     [[ "$output" == *"no tiene redes nuevas"* ]]
 }
 
-@test "networks_import_from_iwd: agrega fila con la PSK del .psk" {
+@test "networks_pull_iwd: agrega fila con la PSK del .psk" {
     printf '[Security]\nPassphrase=super-secreta-123\n' > "$IWD_DIR/MiRed.psk"
 
-    run networks_import_from_iwd
+    run networks_pull_iwd
     [ "$status" -eq 0 ]
     [[ "$output" == *"1 fila"* ]]
 
@@ -52,35 +52,35 @@ setup() {
     [ "$status" -eq 0 ]
 }
 
-@test "networks_import_from_iwd: idempotente (segunda corrida no duplica)" {
+@test "networks_pull_iwd: idempotente (segunda corrida no duplica)" {
     printf '[Security]\nPassphrase=psk-xyz\n' > "$IWD_DIR/Otra.psk"
-    networks_import_from_iwd >/dev/null 2>&1
+    networks_pull_iwd >/dev/null 2>&1
 
     local n1; n1="$(grep -c '^Otra' "$NETWORKS_STORE")"
     [ "$n1" -eq 1 ]
 
-    networks_import_from_iwd >/dev/null 2>&1
+    networks_pull_iwd >/dev/null 2>&1
     local n2; n2="$(grep -c '^Otra' "$NETWORKS_STORE")"
     [ "$n2" -eq 1 ]
 }
 
-@test "networks_import_from_iwd: no pisa SSID ya presente en la DB" {
+@test "networks_pull_iwd: no pisa SSID ya presente en la DB" {
     printf '# ssid\tpsk\tiface\tautoconnect\tpriority\tupdated\n' > "$NETWORKS_STORE"
     printf 'MiRed\tpsk-vieja\twlan0\tyes\t0\t1700000000\n' >> "$NETWORKS_STORE"
     printf '[Security]\nPassphrase=psk-nueva\n' > "$IWD_DIR/MiRed.psk"
 
-    networks_import_from_iwd >/dev/null 2>&1
+    networks_pull_iwd >/dev/null 2>&1
     run grep -P '^MiRed\tpsk-vieja\t' "$NETWORKS_STORE"
     [ "$status" -eq 0 ]
     run grep -P '^MiRed\tpsk-nueva\t' "$NETWORKS_STORE"
     [ "$status" -ne 0 ]
 }
 
-@test "networks_import_from_iwd: multiplos SSID se importan todos" {
+@test "networks_pull_iwd: multiplos SSID se importan todos" {
     printf '[Security]\nPassphrase=psk-a\n' > "$IWD_DIR/RedA.psk"
     printf '[Security]\nPassphrase=psk-b\n' > "$IWD_DIR/RedB.psk"
 
-    networks_import_from_iwd >/dev/null 2>&1
+    networks_pull_iwd >/dev/null 2>&1
     run grep -c '^Red[AB]' "$NETWORKS_STORE"
     [ "$status" -eq 0 ]
     [ "$output" -eq 2 ]

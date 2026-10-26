@@ -119,7 +119,7 @@ help_index() {
 
     _help_cat STATE "ESTADO (solo lectura)"
     _help_cmd "  " "wifi status"                "NM, antenas, conexiones, LAN, VPN, internet"
-    _help_cmd "  " "wifi ifaces"                "inventario fisico de antenas (kernel + NM)"
+    _help_cmd "  " "wifi interfaces"            "inventario fisico de antenas (kernel + NM)"
     _help_cmd "  " "wifi version"               "version del stack"
 
     _help_cat RADIO "ANTENAS (WiFi, nativa + USB)"
@@ -127,7 +127,7 @@ help_index() {
     _help_cmd "  " "sudo wifi radio primary <i>"   "persistente: i pasa a PRIMARY"
     _help_cmd "  " "sudo wifi radio secondary <i>" "persistente: i pasa a SECONDARY"
     _help_cmd "  " "sudo wifi radio use <i>"       "solo esta sesion (no persiste)"
-    _help_cmd "  " "sudo wifi radio clear-session" "olvida override de sesion"
+    _help_cmd "  " "sudo wifi radio session clear" "olvida override de sesion"
     _help_cmd "  " "sudo wifi radio up <i>"        "activa la antena"
     _help_cmd "  " "sudo wifi radio down <i>"      "desactiva la antena"
 
@@ -135,29 +135,28 @@ help_index() {
     _help_cmd "  " "sudo wifi scan [--iface X]"    "escaneo: redes visibles ahora"
     _help_cmd "  " "sudo wifi add [<ssid>]"        "crear + conectar (picker fzf)"
     _help_cmd "  " "wifi networks [list]"          "tabla unificada del store de redes"
-    _help_cmd "  " "sudo wifi networks merge"      "funde perfiles NM al store"
-    _help_cmd "  " "sudo wifi networks sync"       "regenera perfiles NM desde el store"
-    _help_cmd "  " "sudo wifi networks import-iwd" "importa las redes conocidas por iwd"
+    _help_cmd "  " "sudo wifi networks pull nm"   "funde perfiles NM al store"
+    _help_cmd "  " "sudo wifi networks pull iwd"  "importa las redes conocidas por iwd"
     _help_cmd "  " "sudo wifi networks show <ssid>" "ficha completa de un SSID"
     _help_cmd "  " "sudo wifi networks export <p>" "backup del store a <p>"
     _help_cmd "  " "sudo wifi networks import <p>" "merge desde <p> (aditivo)"
-    _help_cmd "  " "sudo wifi networks prune"     "elimina filas huerfanas"
-    _help_cmd "  " "sudo wifi switch <ssid>"       "cambia al perfil guardado"
-    _help_cmd "  " "sudo wifi passwd <ssid|perfil>" "cambia PSK + reconecta"
-    _help_cmd "  " "sudo wifi showpass <profile>"  "muestra PSK"
-    _help_cmd "  " "sudo wifi rename <p> <p2>"      "renombra un perfil"
-    _help_cmd "  " "sudo wifi setpriority <p> <N>" "cambia prioridad de autoconnect"
+    _help_cmd "  " "sudo wifi networks cleanup"   "elimina filas huerfanas"
+    _help_cmd "  " "sudo wifi connect <ssid>"      "cambia al perfil guardado"
+    _help_cmd "  " "sudo wifi password set <ssid|perfil>" "cambia PSK + reconecta"
+    _help_cmd "  " "sudo wifi password show <profile>" "muestra PSK"
+    _help_cmd "  " "sudo wifi profile rename <p> <p2>" "renombra un perfil"
+    _help_cmd "  " "sudo wifi priority set <p> <N>" "cambia prioridad de autoconnect"
     _help_cmd "  " "sudo wifi delete <p>"          "borra un perfil"
-    _help_cmd "  " "sudo wifi autoconnect <profile> <on|off>" "autoconnect manual"
+    _help_cmd "  " "sudo wifi autoconnect set <profile> <on|off>" "autoconnect manual"
 
     _help_cat MAC "MAC (clonado por perfil)"
-    _help_cmd "  " "sudo wifi setmac <profile> <mac|random|stable|permanent>" "clonar MAC"
-    _help_cmd "  " "wifi showmac <profile>"        "MAC clonada o permanente"
+    _help_cmd "  " "sudo wifi mac set <profile> <mac|random|stable|permanent>" "clonar MAC"
+    _help_cmd "  " "wifi mac show <profile>"       "MAC clonada o permanente"
 
     _help_cat USB "USB NAMING (MAC -> nombre de iface)"
-    _help_cmd "  " "wifi usb-names"                "ver mappings y estado de .link"
-    _help_cmd "  " "sudo wifi usb-names apply"     "aplicar mappings (proximo boot)"
-    _help_cmd "  " "sudo wifi usb-names edit"      "editar config/usb-names.conf"
+    _help_cmd "  " "wifi usb status"               "ver mappings y estado de .link"
+    _help_cmd "  " "sudo wifi usb apply"           "aplicar mappings (proximo boot)"
+    _help_cmd "  " "sudo wifi usb edit"            "editar config/usb-names.conf"
 
     _help_cat LAN "LAN (cable ethernet, activacion manual)"
     _help_cmd "  " "sudo wifi lan setup server --ip 1.2.3.2/24"   "IP estatica + NAT"
@@ -222,7 +221,7 @@ help_status() {
     _help_note "para detalle por area: wifi ifaces, wifi radio list, wifi fallback status"
 }
 
-help_ifaces() {
+help_interfaces() {
     _help_title "wifi ifaces -- inventario fisico de antenas WiFi"
     _help_usage "wifi ifaces"
     printf '\n'
@@ -244,10 +243,10 @@ help_radio() {
     _help_cmd "  " "primary <iface>"     "persistente: iface pasa a PRIMARY"
     _help_cmd "  " "secondary <iface>"   "persistente: iface pasa a SECONDARY"
     _help_cmd "  " "use <iface> [--persist]" "solo esta sesion (o persistente con flag)"
-    _help_cmd "  " "clear-session"       "olvida override de sesion"
+    _help_cmd "  " "session clear"       "olvida override de sesion"
     _help_cmd "  " "up <iface> [--persist]" "activa la antena (autoconnect on con --persist)"
     _help_cmd "  " "down <iface> [--persist]" "desactiva la antena (autoconnect off con --persist)"
-    _help_cmd "  " "boot-select"        "fallback de arranque (interno, lo corre systemd)"
+    _help_cmd "  " "boot"               "fallback de arranque (interno, lo corre systemd)"
     printf '\n'
     _help_intro "Modelo: PRIMARY/SECONDARY solo controlan la prioridad de ruta;"
     _help_intro "ambas antenas pueden estar activas simultaneamente."
@@ -312,7 +311,7 @@ help_add() {
 
 help_networks() {
     _help_title "wifi networks -- store central de redes WiFi"
-    _help_usage "sudo wifi networks <list [--sort <col>] [--reverse]|show|merge|sync|import-iwd|export|import|prune>"
+    _help_usage "sudo wifi networks <list|show|pull <nm|iwd>|export|import|cleanup>"
     _help_intro ""
     _help_intro "Store: STATE_DIR/networks.tsv, una fila por (ssid, iface)."
     _help_intro "La PSK se guarda una vez por SSID y se propaga a todas las filas."
@@ -322,30 +321,29 @@ help_networks() {
     _help_intro "     --sort <col>  ordenar por columna (default: ssid)"
     _help_intro "     --reverse     descendente"
     _help_cmd "  " "show <ssid>"       "ficha completa de un SSID"
-    _help_cmd "  " "merge"             "funde perfiles NM actuales al store (aditivo)"
-    _help_cmd "  " "sync"              "regenera perfiles NM desde el store"
-    _help_cmd "  " "import-iwd"        "agrega al store las redes conocidas por iwd"
+    _help_cmd "  " "pull nm"           "funde perfiles NM actuales al store (aditivo)"
+        _help_cmd "  " "pull iwd"          "agrega al store las redes conocidas por iwd"
     _help_cmd "  " "export <path>"     "copia el store a <path> (backup)"
     _help_cmd "  " "import <path>"     "mergea desde <path> (aditivo)"
-    _help_cmd "  " "prune"             "elimina filas huerfanas (con confirmacion)"
+    _help_cmd "  " "cleanup"           "elimina filas huerfanas (con confirmacion)"
     printf '\n'
     _help_warn "todos los subcomandos requieren root (la DB contiene PSKs en claro)."
     _help_intro "import-iwd, export, import funcionan sin NM (util en fallback)."
     _help_intro "el resto requiere NM activo."
 }
 
-help_switch() {
+help_connect() {
     _help_title "wifi switch -- cambiar a un perfil guardado"
-    _help_usage "sudo wifi switch <ssid> [iface]"
+    _help_usage "sudo wifi connect <ssid> [iface]"
     printf '\n'
     _help_intro "Activa el perfil wifi-<iface>-<ssid> ya existente. Si no se"
     _help_intro "especifica iface, usa la PRIMARY."
     _help_note "para crear un perfil nuevo: wifi add <ssid>"
 }
 
-help_passwd() {
+help_password() {
     _help_title "wifi passwd -- cambiar PSK de un perfil"
-    _help_usage "sudo wifi passwd <profile|ssid> [--pass P]"
+    _help_usage "sudo wifi password set <profile|ssid> [--pass P]"
     printf '\n'
     _help_intro "Acepta el nombre exacto del perfil ('wifi-<iface>-<ssid>')"
     _help_intro "o el SSID de la red; con el SSID se resuelve el primer"
@@ -374,9 +372,9 @@ help_showpass() {
     _help_warn "la salida contiene la clave en claro: no la pegues en logs compartidos."
 }
 
-help_rename() {
+help_profile() {
     _help_title "wifi rename -- renombrar un perfil guardado"
-    _help_usage "sudo wifi rename <perfil-actual> <perfil-nuevo>"
+    _help_usage "sudo wifi profile rename <perfil-actual> <perfil-nuevo>"
     printf '\n'
     _help_intro "Cambia solo el nombre del perfil NM. UUID, PSK, MAC y"
     _help_intro "prioridad se preservan intactos."
@@ -384,9 +382,9 @@ help_rename() {
     _help_note "para listar perfiles: wifi networks"
 }
 
-help_setpriority() {
+help_priority() {
     _help_title "wifi setpriority -- cambiar prioridad de un perfil"
-    _help_usage "sudo wifi setpriority <perfil|ssid> <N>"
+    _help_usage "sudo wifi priority set <perfil|ssid> <N>"
     printf '\n'
     _help_intro "Mayor N = preferido. Cuando dos perfiles pueden conectar a"
     _help_intro "la misma antena, NM elige el de prioridad mas alta."
@@ -408,9 +406,9 @@ help_delete() {
     _help_note "para ver los perfiles: wifi networks"
 }
 
-help_setmac() {
+help_mac() {
     _help_title "wifi setmac -- clonar MAC por perfil"
-    _help_usage "sudo wifi setmac <profile> <mac|random|stable|permanent>"
+    _help_usage "sudo wifi mac set <profile> <mac|random|stable|permanent>"
     printf '\n'
     _help_intro "Valores aceptados:"
     printf '  %smac%s        MAC literal aa:bb:cc:dd:ee:ff\n' "${H_KEY}" "${H_RESET}"
@@ -430,7 +428,7 @@ help_showmac() {
 
 help_autoconnect() {
     _help_title "wifi autoconnect -- autoconnect manual de un perfil"
-    _help_usage "sudo wifi autoconnect <profile> <on|off>"
+    _help_usage "sudo wifi autoconnect set <profile> <on|off>"
     printf '\n'
     _help_intro "on   el perfil se activa solo cuando la antena ve la red."
     _help_intro "off  el perfil existe pero no se activa automaticamente."
@@ -481,9 +479,9 @@ help_lan() {
     _help_cmd "  " "remove"                                  "borra el perfil y el state"
 }
 
-help_usb_names() {
+help_usb() {
     _help_title "wifi usb-names -- MAC -> nombre de iface USB WiFi"
-    _help_usage "sudo wifi usb-names <status|apply|edit>"
+    _help_usage "sudo wifi usb <status|apply|edit>"
     _help_intro ""
     _help_intro "Fuente: config/usb-names.conf (una linea: <mac> <nombre>)."
     _help_intro "Al aplicar, se escribe un .link systemd por mapping. El rename"

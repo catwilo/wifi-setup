@@ -82,9 +82,9 @@ setup() {
     [ "$status" -ne 0 ]
 }
 
-@test "networks_prune: rechaza correr sin NM activo" {
+@test "networks_cleanup: rechaza correr sin NM activo" {
     # systemctl is-active NM siempre falla en test -> debe abortar.
-    run networks_prune
+    run networks_cleanup
     [ "$status" -ne 0 ]
     [[ "$output" == *"requiere NM activo"* ]]
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# boot_select.bats -- invariantes de radio_boot_select (sin sleep, sin polling).
+# boot_select.bats -- invariantes de radio_boot (sin sleep, sin polling).
 #
 # La funcion real vive en lib/radio.sh. Estos tests previenen regresiones
 # historicas: la version vieja hacia polling con sleep 3 en un loop de 60s
@@ -11,8 +11,8 @@ load helpers
 
 setup() { setup_env; }
 
-@test "radio_boot_select: sin sleep ni contadores de espera" {
-    run grep -A80 '^radio_boot_select()' "$REPO/lib/radio.sh"
+@test "radio_boot: sin sleep ni contadores de espera" {
+    run grep -A80 '^radio_boot()' "$REPO/lib/radio.sh"
     [ "$status" -eq 0 ]
     [[ "$output" != *"sleep "* ]]
     [[ "$output" != *"waited="* ]]
@@ -20,7 +20,7 @@ setup() { setup_env; }
 
 
 @test "install.sh: la unit boot-select declara NetworkManager-wait-online" {
-    run grep -A5 'wifi-setup-boot-select.service' "$INSTALL"
+    run grep -A5 'wifi-setup-radio-boot.service' "$INSTALL"
     [ "$status" -eq 0 ]
     [[ "$output" == *"NetworkManager-wait-online"* ]]
 }

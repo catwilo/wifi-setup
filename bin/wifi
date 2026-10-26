@@ -231,8 +231,8 @@ _cmd_status() {
 # Muestra lo que el kernel ve + lo que NM ve, mas adaptadores USB
 # presentes en el bus que no cargaron driver.
 # ---------------------------------------------------------------------------
-_cmd_ifaces() {
-    _maybe_help ifaces "$@"
+_cmd_interfaces() {
+    _maybe_help interfaces "$@"
 
     _load nm radio
     # Solo lectura: no requiere root.
@@ -257,7 +257,15 @@ _cmd_radio() {
     require_root
 
     case "${sub}" in
-        boot-select)    radio_boot_select ;;
+        boot)           radio_boot ;;
+        session)
+            local ssub="${1:-}"
+            shift || true
+            case "${ssub}" in
+                clear) radio_clear_session ;;
+                *) _die "uso: wifi radio session <clear>" ;;
+            esac
+            ;;
         *)
             nm_require
             case "${sub}" in
@@ -265,7 +273,6 @@ _cmd_radio() {
                 primary)       radio_set_primary   "${1:-}" ;;
                 secondary)     radio_set_secondary "${1:-}" ;;
                 use)           radio_use           "$@" ;;
-                clear-session) radio_clear_session ;;
                 up)            radio_up   "$@" ;;
                 down)          radio_down "$@" ;;
                 *) _die "subcomando desconocido: ${sub}" ;;
@@ -416,28 +423,33 @@ _cmd_networks() {
     case "${sub}" in
         list|"") nm_require; networks_list "$@" ;;
         show)    nm_require; networks_show "${1:-}" ;;
-        import-iwd) networks_import_from_iwd ;;
-        merge)   nm_require; networks_merge ;;
-        sync)    nm_require; networks_sync ;;
+        pull)
+            local pull_dst="${1:-}"
+            case "${pull_dst}" in
+                nm)  nm_require; networks_pull_nm ;;
+                iwd) networks_pull_iwd ;;
+                *) _die "uso: wifi networks pull <nm|iwd>" ;;
+            esac
+            ;;
         export)  networks_export "${1:-}" ;;
         import)  networks_import "${1:-}" ;;
-        prune)   nm_require; networks_prune ;;
-        *) _die "uso: wifi networks <list|show|merge|sync|import-iwd|export|import|prune>" ;;
+        cleanup) nm_require; networks_cleanup ;;
+        *) _die "uso: wifi networks <list|show|pull <nm|iwd>|export|import|cleanup>" ;;
     esac
 }
 
 # ---------------------------------------------------------------------------
 # switch <ssid> [--iface X] -- cambiar a un perfil WiFi guardado.
 # ---------------------------------------------------------------------------
-_cmd_switch() {
-    _maybe_help switch "$@"
+_cmd_connect() {
+    _maybe_help connect "$@"
 
     _load nm radio
     nm_require
     require_root
 
     local ssid="${1:-}" iface="${2:-}"
-    [[ -n "${ssid}" ]] || _die "uso: wifi switch <ssid> [iface]"
+    [[ -n "${ssid}" ]] || _die "uso: wifi connect <ssid> [iface]"
 
     if [[ -z "${iface}" ]]; then
         _radio_load_state
@@ -462,8 +474,8 @@ _cmd_switch() {
 # ---------------------------------------------------------------------------
 # passwd <profile> -- cambiar PSK de un perfil.
 # ---------------------------------------------------------------------------
-_cmd_passwd() {
-    _maybe_help passwd "$@"
+_cmd_password_set() {
+    _maybe_help password "$@"
 
     _load nm
     nm_require
@@ -474,7 +486,7 @@ _cmd_passwd() {
         case "$1" in
             --pass) pass="${2:-}"; shift 2 ;;
             -h|--help)
-                echo "uso: wifi passwd <profile|ssid> [--pass P]"
+                echo "uso: wifi password set <profile|ssid> [--pass P]"
                 echo ""
                 echo "Cambia la PSK del perfil y reconecta."
                 echo "Acepta el nombre del perfil ('wifi-<iface>-<ssid>') o el SSID."
@@ -490,7 +502,7 @@ _cmd_passwd() {
                 ;;
         esac
     done
-    [[ -n "${target}" ]] || _die "uso: wifi passwd <profile|ssid> [--pass P]"
+    [[ -n "${target}" ]] || _die "uso: wifi password set <profile|ssid> [--pass P]"
 
     local profile
     profile="$(_passwd_resolve_profile "${target}")" \
@@ -575,14 +587,14 @@ _passwd_resolve_profile() {
 # ---------------------------------------------------------------------------
 # showpass <profile> -- PSK en claro del perfil.
 # ---------------------------------------------------------------------------
-_cmd_showpass() {
-    _maybe_help showpass "$@"
+_cmd_password_show() {
+    _maybe_help password "$@"
 
     _load nm networks
     require_root
 
     local target="${1:-}"
-    [[ -n "${target}" ]] || _die "uso: wifi showpass <perfil|ssid>"
+    [[ -n "${target}" ]] || _die "uso: wifi password show <perfil|ssid>"
 
     # 1) Si es un perfil NM existente, leer de ahi (fuente autoritativa
     #    cuando NM esta corriendo).
@@ -626,15 +638,15 @@ _cmd_showpass() {
 # rename <perfil-actual> <perfil-nuevo> -- renombra un perfil guardado.
 # Cambia solo el nombre; UUID, PSK, MAC y prioridad se preservan.
 # ---------------------------------------------------------------------------
-_cmd_rename() {
-    _maybe_help rename "$@"
+_cmd_profile_rename() {
+    _maybe_help profile "$@"
 
     _load nm networks
     nm_require
     require_root
 
     local old="${1:-}" new="${2:-}"
-    [[ -n "${old}" && -n "${new}" ]] || _die "uso: wifi rename <perfil-actual> <perfil-nuevo>"
+    [[ -n "${old}" && -n "${new}" ]] || _die "uso: wifi profile rename <perfil-actual> <perfil-nuevo>"
 
     nm_con_exists "${old}" || _die "perfil '${old}' no existe"
 
@@ -669,15 +681,15 @@ _cmd_rename() {
 # setpriority <perfil|ssid> <N> -- cambia la prioridad de autoconnect.
 # Mayor N = preferido. Persistente.
 # ---------------------------------------------------------------------------
-_cmd_setpriority() {
-    _maybe_help setpriority "$@"
+_cmd_priority_set() {
+    _maybe_help priority "$@"
 
     _load nm networks
     nm_require
     require_root
 
     local target="${1:-}" prio="${2:-}"
-    [[ -n "${target}" && -n "${prio}" ]] || _die "uso: wifi setpriority <perfil|ssid> <N>"
+    [[ -n "${target}" && -n "${prio}" ]] || _die "uso: wifi priority set <perfil|ssid> <N>"
     [[ "${prio}" =~ ^[0-9]+$ ]] || _die "prioridad debe ser un numero entero (0..999)"
 
     local profile
@@ -741,15 +753,15 @@ _cmd_delete() {
 # ---------------------------------------------------------------------------
 # setmac <profile> <mac|random|stable|permanent>
 # ---------------------------------------------------------------------------
-_cmd_setmac() {
-    _maybe_help setmac "$@"
+_cmd_mac_set() {
+    _maybe_help mac "$@"
 
     _load nm
     nm_require
     require_root
 
     local profile="${1:-}" mac="${2:-}"
-    [[ -n "${profile}" && -n "${mac}" ]] || _die "uso: wifi setmac <profile> <mac|random|stable|permanent>"
+    [[ -n "${profile}" && -n "${mac}" ]] || _die "uso: wifi mac set <profile> <mac|random|stable|permanent>"
 
     nm_con_exists "${profile}" || _die "perfil '${profile}' no existe"
 
@@ -764,15 +776,15 @@ _cmd_setmac() {
 # ---------------------------------------------------------------------------
 # showmac <profile>
 # ---------------------------------------------------------------------------
-_cmd_showmac() {
-    _maybe_help showmac "$@"
+_cmd_mac_show() {
+    _maybe_help mac "$@"
 
     _load nm
     nm_require
     require_root
 
     local profile="${1:-}"
-    [[ -n "${profile}" ]] || _die "uso: wifi showmac <profile>"
+    [[ -n "${profile}" ]] || _die "uso: wifi mac show <profile>"
 
     local type mac
     type="$(nm_con_get "${profile}" connection.type)"
@@ -787,7 +799,7 @@ _cmd_showmac() {
 # ---------------------------------------------------------------------------
 # autoconnect <profile> <on|off>
 # ---------------------------------------------------------------------------
-_cmd_autoconnect() {
+_cmd_autoconnect_set() {
     _maybe_help autoconnect "$@"
 
     _load nm networks
@@ -795,7 +807,7 @@ _cmd_autoconnect() {
     require_root
 
     local profile="${1:-}" mode="${2:-}"
-    [[ -n "${profile}" && -n "${mode}" ]] || _die "uso: wifi autoconnect <profile> <on|off>"
+    [[ -n "${profile}" && -n "${mode}" ]] || _die "uso: wifi autoconnect set <profile> <on|off>"
     nm_con_exists "${profile}" || _die "perfil '${profile}' no existe"
 
     # Normalizar al vocabulario de la DB (yes/no).
@@ -924,8 +936,8 @@ _cmd_lan() {
 # Gestiona el mapeo MAC -> nombre de iface USB WiFi.
 # Fuente: config/usb-names.conf en BASE_DIR (si install corrio) o en el repo.
 # ---------------------------------------------------------------------------
-_cmd_usb_names() {
-    _maybe_help usb_names "$@"
+_cmd_usb() {
+    _maybe_help usb "$@"
 
     local sub="${1:-}"
     shift || true
@@ -1019,6 +1031,73 @@ _cmd_help() {
 }
 
 # ---------------------------------------------------------------------------
+# password <set|show>
+# ---------------------------------------------------------------------------
+_cmd_password() {
+    _maybe_help password "$@"
+    local sub="${1:-}"
+    shift || true
+    case "${sub}" in
+        set)  _cmd_password_set "$@" ;;
+        show) _cmd_password_show "$@" ;;
+        *) _die "uso: wifi password <set|show> [args]" ;;
+    esac
+}
+
+# ---------------------------------------------------------------------------
+# priority <set>
+# ---------------------------------------------------------------------------
+_cmd_priority() {
+    _maybe_help priority "$@"
+    local sub="${1:-}"
+    shift || true
+    case "${sub}" in
+        set) _cmd_priority_set "$@" ;;
+        *) _die "uso: wifi priority set <perfil|ssid> <N>" ;;
+    esac
+}
+
+# ---------------------------------------------------------------------------
+# autoconnect <set>
+# ---------------------------------------------------------------------------
+_cmd_autoconnect() {
+    _maybe_help autoconnect "$@"
+    local sub="${1:-}"
+    shift || true
+    case "${sub}" in
+        set) _cmd_autoconnect_set "$@" ;;
+        *) _die "uso: wifi autoconnect set <perfil> <on|off>" ;;
+    esac
+}
+
+# ---------------------------------------------------------------------------
+# mac <set|show>
+# ---------------------------------------------------------------------------
+_cmd_mac() {
+    _maybe_help mac "$@"
+    local sub="${1:-}"
+    shift || true
+    case "${sub}" in
+        set)  _cmd_mac_set "$@" ;;
+        show) _cmd_mac_show "$@" ;;
+        *) _die "uso: wifi mac <set|show> [args]" ;;
+    esac
+}
+
+# ---------------------------------------------------------------------------
+# profile <rename>
+# ---------------------------------------------------------------------------
+_cmd_profile() {
+    _maybe_help profile "$@"
+    local sub="${1:-}"
+    shift || true
+    case "${sub}" in
+        rename) _cmd_profile_rename "$@" ;;
+        *) _die "uso: wifi profile rename <perfil-actual> <perfil-nuevo>" ;;
+    esac
+}
+
+# ---------------------------------------------------------------------------
 # Dispatch
 # ---------------------------------------------------------------------------
 CMD="${1:-help}"
@@ -1026,25 +1105,23 @@ shift || true
 
 case "${CMD}" in
     status)          _cmd_status "$@" ;;
-    ifaces)          _cmd_ifaces "$@" ;;
+    interfaces)      _cmd_interfaces "$@" ;;
     radio)           _cmd_radio "$@" || exit $? ;;
     scan)            _cmd_scan "$@" || exit $? ;;
     add)             _cmd_add "$@" ;;
     networks)        _cmd_networks "$@" || exit $? ;;
-    switch)          _cmd_switch "$@" ;;
-    passwd|password) _cmd_passwd "$@" ;;
-    showpass)        _cmd_showpass "$@" ;;
-    rename)          _cmd_rename "$@" ;;
-    setpriority)     _cmd_setpriority "$@" ;;
-    delete)          _cmd_delete "$@" ;;
-    setmac)          _cmd_setmac "$@" ;;
-    showmac)         _cmd_showmac "$@" ;;
+    connect)         _cmd_connect "$@" ;;
+    password)        _cmd_password "$@" ;;
+    priority)        _cmd_priority "$@" ;;
     autoconnect)     _cmd_autoconnect "$@" ;;
+    mac)             _cmd_mac "$@" ;;
+    profile)         _cmd_profile "$@" ;;
+    delete)          _cmd_delete "$@" ;;
+    usb)             _cmd_usb "$@" ;;
     panic)           _cmd_panic "$@" ;;
     monitor)         _cmd_monitor "$@" ;;
     doctor)          _cmd_doctor "$@" || exit $? ;;
     lan)             _cmd_lan "$@" ;;
-    usb-names)       _cmd_usb_names "$@" ;;
     vpn)             _cmd_vpn "$@" ;;
     fallback)        _cmd_fallback "$@" || exit $? ;;
     version|-v|--version) _cmd_version "$@" ;;

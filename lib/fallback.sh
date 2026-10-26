@@ -252,7 +252,7 @@ fallback_off() {
     # corriendo).
     if command -v iwctl >/dev/null 2>&1; then
         info "importando redes conocidas por iwd a la DB..."
-        networks_import_from_iwd
+        networks_pull_iwd
     fi
 
     info "parando iwd..."

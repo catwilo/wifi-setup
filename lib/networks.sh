@@ -13,7 +13,7 @@
 #     PSK nueva, se propaga a todas las filas del mismo SSID.
 #
 # COMANDOS:
-#   networks_merge   lee TODOS los perfiles NM WiFi y los funde al store.
+#   networks_pull_nm lee TODOS los perfiles NM WiFi y los funde al store.
 #                    Aditivo: nunca borra, siempre agrega o actualiza.
 #                    Si un SSID solo estaba en una antena, agrega filas
 #                    para las otras con autoconnect=no, priority=0.
@@ -66,7 +66,7 @@ _networks_psk_for_ssid() {
 }
 
 # ---------------------------------------------------------------------------
-# networks_merge -- funde los perfiles NM actuales al store (aditivo).
+# networks_pull_nm -- funde los perfiles NM actuales al store (aditivo).
 #
 # Reglas:
 #   - Para cada perfil NM WiFi: (ssid, iface, autoconnect, priority, psk).
@@ -77,7 +77,7 @@ _networks_psk_for_ssid() {
 #   - Los valores previos de autoconnect/priority por (ssid, iface) se
 #     preservan del store viejo si existen.
 # ---------------------------------------------------------------------------
-networks_merge() {
+networks_pull_nm() {
     _networks_store_init
 
     local ts; ts="$(date +%s)"
@@ -361,10 +361,10 @@ _iwd_psk_for_ssid() {
     sed -n 's/^Passphrase=//p' "$f"
 }
 
-# networks_import_from_iwd -- agrega a la DB las redes que iwd conoce y la
+# networks_pull_iwd -- agrega a la DB las redes que iwd conoce y la
 # DB no tiene. Aditivo: nunca borra ni reemplaza PSK existentes. Crea una
 # fila por (ssid, iface) para cada antena WiFi presente.
-networks_import_from_iwd() {
+networks_pull_iwd() {
     local iwd_dir="${IWD_DIR}"
     [[ -d "$iwd_dir" ]] || {
         info "networks: iwd no tiene store (${iwd_dir} ausente)"
@@ -608,9 +608,9 @@ networks_import() {
     ok "DB importada desde ${path} (${added} fila(s) nuevas)"
 }
 
-# networks_prune -- elimina filas del TSV cuyo SSID ya no existe en ningun
+# networks_cleanup -- elimina filas del TSV cuyo SSID ya no existe en ningun
 # backend (ni perfil NM ni .psk en iwd). Con confirmacion explicita.
-networks_prune() {
+networks_cleanup() {
     [[ -f "${NETWORKS_STORE}" ]] || { warn "DB vacia"; return 0; }
 
     # Sin NM, nm_con_exists siempre falla y TODAS las filas parecen

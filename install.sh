@@ -135,7 +135,7 @@ _root_phase() {
 
     # Unit de boot-select: si no existe o no declara wait-online, el
     # install no es idempotente -- se regenera al reejecutar.
-    local _boot_unit="/etc/systemd/system/wifi-setup-boot-select.service"
+    local _boot_unit="/etc/systemd/system/wifi-setup-radio-boot.service"
     if [[ -f "${_boot_unit}" ]] \
        && grep -q 'NetworkManager-wait-online.service' "${_boot_unit}"; then
         _idem_boot="OK"
@@ -166,7 +166,7 @@ _root_phase() {
         info "instalacion previa detectada -- limpiando..."
         sweep_legacy_install
 
-        for svc in wifi-setup-forward wifi-setup-client wifi-setup-lan wifi-setup-boot-select; do
+        for svc in wifi-setup-forward wifi-setup-client wifi-setup-lan wifi-setup-radio-boot; do
             systemctl stop    "${svc}" 2>/dev/null || true
             systemctl disable "${svc}" 2>/dev/null || true
             rm -f "/etc/systemd/system/${svc}.service"
@@ -339,7 +339,7 @@ _root_phase() {
     # Servicio oneshot: al boot, si PRIMARY no tiene IP tras
     # NetworkManager-wait-online (sin polling ni sleep), activa
     # SECONDARY. Una sola vez por arranque; no interfiere con runtime.
-    cat > /etc/systemd/system/wifi-setup-boot-select.service <<EOF_SVC
+    cat > /etc/systemd/system/wifi-setup-radio-boot.service <<EOF_SVC
 [Unit]
 Description=wifi-setup boot-select (fallback de antena al arranque)
 After=NetworkManager.service NetworkManager-wait-online.service
@@ -348,7 +348,7 @@ ConditionPathExists=${WIFI_BIN}
 
 [Service]
 Type=oneshot
-ExecStart=${WIFI_BIN} radio boot-select
+ExecStart=${WIFI_BIN} radio boot
 RemainAfterExit=no
 # Sin polling ni sleep: systemd espera a NM via wait-online.
 TimeoutStartSec=180
@@ -356,10 +356,10 @@ TimeoutStartSec=180
 [Install]
 WantedBy=multi-user.target
 EOF_SVC
-    chmod 644 /etc/systemd/system/wifi-setup-boot-select.service
+    chmod 644 /etc/systemd/system/wifi-setup-radio-boot.service
     systemctl daemon-reload 2>/dev/null || true
-    systemctl enable wifi-setup-boot-select 2>/dev/null || true
-    ok "servicio wifi-setup-boot-select habilitado (fallback de arranque)"
+    systemctl enable wifi-setup-radio-boot 2>/dev/null || true
+    ok "servicio wifi-setup-radio-boot habilitado (fallback de arranque)"
 
     # ---------------------------------------------------------------------
     # USB WiFi naming: copiar config y aplicar .link por MAC.

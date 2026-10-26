@@ -530,14 +530,14 @@ radio_ifaces_list() {
 }
 
 
-# radio_boot_select -- fallback de antena al arranque: si PRIMARY no
+# radio_boot -- fallback de antena al arranque: si PRIMARY no
 # tiene IP tras NetworkManager-wait-online (sin polling ni sleep),
 # activa la mejor SECONDARY (mayor prioridad en la DB). Corre UNA VEZ
 # al boot via wifi-setup-boot-select.service. No es watchdog: no
 # interfiere con estado de runtime. Si el usuario activa ambas antenas
 # despues del boot, nada las toca.
 # ---------------------------------------------------------------------------
-radio_boot_select() {
+radio_boot() {
     _radio_load_state
     local primary="${RADIO_PRIMARY:-}"
     local secondary="${RADIO_SECONDARY:-}"
