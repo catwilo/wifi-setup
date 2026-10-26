@@ -107,12 +107,21 @@ nm_con_delete() {
     info "perfil(es) borrado(s): ${name} (${deleted})"
 }
 
-# nm_con_up <name> -- activa un perfil. Sin redireccion: la salida real
-# de nmcli (stdout + stderr) llega al caller para que el usuario vea la
-# causa exacta del exito o del fallo.
+# nm_con_up <name> -- activa un perfil con un tope de 90s. Un caller
+# residual (add, password set) no debe bloquear el timeout completo de
+# autoconnect si el SSID esta fuera de rango. Sin redireccion.
 nm_con_up() {
     local name="$1"
-    nmcli con up "${name}"
+    nmcli --wait 90 con up "${name}"
+}
+
+# nm_device_connect <iface> -- pide a NetworkManager que conecte la iface
+# a la mejor red visible conocida. Respeta autoconnect y no fija un SSID:
+# NM elige entre las visibles por autoconnect-priority y connection.timestamp.
+# Sin redireccion: la salida real de nmcli llega al usuario.
+nm_device_connect() {
+    local iface="$1"
+    nmcli device connect "${iface}"
 }
 
 # nm_con_down <name> -- desactiva un perfil. Sin redireccion: la salida

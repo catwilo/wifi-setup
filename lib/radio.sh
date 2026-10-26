@@ -343,10 +343,10 @@ radio_up() {
     local con
     con="$(_radio_iface_con "${iface}" 2>/dev/null || true)"
     if [[ -n "${con}" ]]; then
-        if nm_con_up "${con}" 2>/dev/null; then
-            ok "${iface} encendida, conectada con '${con}'"
+        if nm_device_connect "${iface}"; then
+            ok "${iface} encendida, conectada via NM (perfil '${con}')"
         else
-            warn "${iface} encendida, pero '${con}' no conecto (revisa: wifi status)"
+            warn "${iface} encendida, pero no conecto (revisa: wifi status)"
         fi
         if [[ "${persist}" -eq 1 ]]; then
             nm_con_set_autoconnect "${con}" on 2>/dev/null || true
@@ -532,7 +532,8 @@ radio_ifaces_list() {
 
 # radio_boot -- fallback de antena al arranque: si PRIMARY no
 # tiene IP tras NetworkManager-wait-online (sin polling ni sleep),
-# activa la mejor SECONDARY (mayor prioridad en la DB). Corre UNA VEZ
+# pide a NM que conecte SECONDARY (NM elige entre las visibles).
+# Corre UNA VEZ
 # al boot via wifi-setup-boot-select.service. No es watchdog: no
 # interfiere con estado de runtime. Si el usuario activa ambas antenas
 # despues del boot, nada las toca.
@@ -543,7 +544,7 @@ radio_boot() {
     local secondary="${RADIO_SECONDARY:-}"
 
     if [[ -z "${primary}" || -z "${secondary}" ]]; then
-        info "boot-select: sin PRIMARY/SECONDARY definidas -- nada que hacer"
+        info "radio boot: sin PRIMARY/SECONDARY definidas -- nada que hacer"
         return 0
     fi
 
@@ -552,55 +553,40 @@ radio_boot() {
     # sin polling ni sleep. Si NM no esta activo (iwd al mando), este
     # servicio no tiene trabajo: exit 0 limpio.
     if ! systemctl is-active NetworkManager; then
-        info "boot-select: NM no activo (iwd al mando) -- nada que hacer"
+        info "radio boot: NM no activo (iwd al mando) -- nada que hacer"
         return 0
     fi
 
     local ip
     ip="$(ip -4 -o addr show "${primary}" | awk '{print $4}' | head -1)"
     if [[ -n "${ip}" ]]; then
-        info "boot-select: ${primary} con IP ${ip} -- nada que hacer"
+        info "radio boot: ${primary} con IP ${ip} -- nada que hacer"
         return 0
     fi
 
     ip="$(ip -4 -o addr show "${secondary}" | awk '{print $4}' | head -1)"
     if [[ -n "${ip}" ]]; then
-        info "boot-select: ${secondary} ya tiene IP ${ip} -- nada que hacer"
+        info "radio boot: ${secondary} ya tiene IP ${ip} -- nada que hacer"
         return 0
     fi
 
-    warn "boot-select: ${primary} sin IP tras wait-online -- activando ${secondary}"
+    warn "radio boot: ${primary} sin IP tras wait-online -- activando ${secondary}"
 
     if ! ip link show "${secondary}"; then
-        err "boot-select: ${secondary} no existe en el kernel -- sin fallback"
+        err "radio boot: ${secondary} no existe en el kernel -- sin fallback"
         return 1
     fi
 
     # Elegir el SSID de SECONDARY con mayor prioridad en la DB (una sola
     # pasada de awk: sin sort/head/cut).
-    local best_ssid
-    best_ssid="$(awk -F'\t' -v i="${secondary}" '
-        $3==i && $2!="" {
-            prio = $5+0
-            if (prio > max) { max = prio; best = $1 }
-        }
-        END { print best }
-    ' <(_networks_store_rows))"
-
-    if [[ -z "${best_ssid}" ]]; then
-        err "boot-select: sin perfiles para ${secondary} en la DB"
-        return 1
-    fi
-
-    local profile="wifi-${secondary}-${best_ssid}"
-    info "boot-select: conectando ${profile}"
+    info "radio boot: conectando ${secondary} (NM elige entre las visibles)"
     ip link set "${secondary}" up
     nmcli dev set "${secondary}" managed yes
-    if nm_con_up "${profile}"; then
-        ok "boot-select: ${secondary} conectada a '${best_ssid}'"
+    if nm_device_connect "${secondary}"; then
+        ok "radio boot: ${secondary} conectada"
         return 0
     fi
-    err "boot-select: no se pudo conectar '${best_ssid}' en ${secondary}"
+    err "radio boot: no se pudo conectar ${secondary}"
     return 1
 }
 

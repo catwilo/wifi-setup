@@ -460,13 +460,13 @@ _cmd_connect() {
     nm_con_exists "${profile}" \
         || _die "perfil '${profile}' no existe -- usa: wifi add ${ssid} --iface ${iface}"
 
-    info "conectando a '${ssid}' via ${iface} (${profile})..."
+    info "conectando ${iface} (NM elige entre las visibles)..."
     local up_rc=0
-    nm_con_up "${profile}" || up_rc=$?
+    nm_device_connect "${iface}" || up_rc=$?
     if [[ "${up_rc}" -eq 0 ]]; then
-        ok "conectado a '${ssid}' via ${iface}"
+        ok "conectado via ${iface}"
     else
-        err "no se pudo conectar a '${ssid}' (rc=${up_rc})"
+        err "no se pudo conectar via ${iface} (rc=${up_rc})"
         err "revisa: wifi status | wifi doctor"
     fi
 }
