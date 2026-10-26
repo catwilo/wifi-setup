@@ -143,6 +143,7 @@ help_index() {
     _help_cmd "  " "sudo wifi networks import <p>" "merge desde <p> (aditivo)"
     _help_cmd "  " "sudo wifi networks prune"     "elimina filas huerfanas"
     _help_cmd "  " "sudo wifi switch <ssid>"       "cambia al perfil guardado"
+    _help_cmd "  " "sudo wifi auto"                "conecta a la mejor red conocida visible"
     _help_cmd "  " "sudo wifi passwd <ssid|perfil>" "cambia PSK + reconecta"
     _help_cmd "  " "sudo wifi showpass <profile>"  "muestra PSK"
     _help_cmd "  " "sudo wifi rename <p> <p2>"      "renombra un perfil"
@@ -341,6 +342,21 @@ help_switch() {
     _help_intro "Activa el perfil wifi-<iface>-<ssid> ya existente. Si no se"
     _help_intro "especifica iface, usa la PRIMARY."
     _help_note "para crear un perfil nuevo: wifi add <ssid>"
+}
+
+help_auto() {
+    _help_title "wifi auto -- conectar a la mejor red conocida visible"
+    _help_usage "sudo wifi auto [iface...]"
+    printf '\n'
+    _help_intro "Para cada antena WiFi, si entre las redes visibles hay alguna"
+    _help_intro "con autoconnect=yes en la DB, pide a NetworkManager que conecte"
+    _help_intro "la antena. NM elige el perfil por autoconnect-priority y"
+    _help_intro "connection.timestamp -- nunca se fuerza un SSID invisible."
+    printf '\n'
+    _help_intro "Sin argumentos recorre todas las antenas WiFi; con argumentos,"
+    _help_intro "solo esas. Solo redes ya guardadas con autoconnect=yes cuentan."
+    printf '\n'
+    _help_note "distinto de 'wifi switch <ssid>': auto no fija un SSID concreto"
 }
 
 help_passwd() {

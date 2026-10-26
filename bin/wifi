@@ -460,6 +460,19 @@ _cmd_switch() {
 }
 
 # ---------------------------------------------------------------------------
+# auto [iface...] -- conectar a la mejor red conocida visible.
+# ---------------------------------------------------------------------------
+_cmd_auto() {
+    _maybe_help auto "$@"
+
+    _load nm radio networks
+    nm_require
+    require_root
+
+    networks_auto "$@"
+}
+
+# ---------------------------------------------------------------------------
 # passwd <profile> -- cambiar PSK de un perfil.
 # ---------------------------------------------------------------------------
 _cmd_passwd() {
@@ -1032,6 +1045,7 @@ case "${CMD}" in
     add)             _cmd_add "$@" ;;
     networks)        _cmd_networks "$@" || exit $? ;;
     switch)          _cmd_switch "$@" ;;
+    auto)            _cmd_auto "$@" ;;
     passwd|password) _cmd_passwd "$@" ;;
     showpass)        _cmd_showpass "$@" ;;
     rename)          _cmd_rename "$@" ;;

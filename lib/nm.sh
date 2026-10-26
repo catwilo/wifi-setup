@@ -115,6 +115,16 @@ nm_con_up() {
     nmcli con up "${name}"
 }
 
+# nm_device_connect <iface> -- pide a NetworkManager que conecte la iface
+# a la mejor red visible. A diferencia de `nmcli con up <perfil>`, respeta
+# autoconnect y no fuerza un SSID invisible: NM elige entre las visibles
+# por autoconnect-priority y connection.timestamp. Sin redireccion: la
+# salida real de nmcli llega al usuario.
+nm_device_connect() {
+    local iface="$1"
+    nmcli device connect "${iface}"
+}
+
 # nm_con_down <name> -- desactiva un perfil. Sin redireccion: la salida
 # de nmcli llega al caller, que decide si mostrarla o registrarla.
 nm_con_down() {
