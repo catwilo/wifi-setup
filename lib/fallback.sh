@@ -344,6 +344,13 @@ fallback_off() {
         echo "" >&2
         info "ultimos 8 eventos de NetworkManager (causa del fallo):"
         journalctl -u NetworkManager -n 8 --no-pager 2>&1 >&2 || true
+        echo "" >&2
+        err "fallback off fallo: NM arranco pero ninguna antena obtuvo IP"
+        info "fallback_state preservado en ${FALLBACK_STATE}"
+        info "siguientes pasos:"
+        info "  wifi doctor"
+        info "  wifi panic"
+        return 1
     fi
 
     rm -f "${FALLBACK_STATE}"
