@@ -223,6 +223,18 @@ _root_phase() {
     echo ""
     section "Configuracion WiFi (perfiles)"
 
+    # En una maquina que viene en fallback (iwd al mando, NM enmascarado)
+    # NM no esta activo todavia. La migracion de stack mas abajo lo
+    # arranca, pero nm_require de aqui arriba moriria sin red. Garantizar
+    # que NM pueda hablar: desenmascarar, habilitar y arrancar si hace
+    # falta. Idempotente: en una maquina limpia no hace nada.
+    if ! systemctl is-active NetworkManager >/dev/null 2>&1; then
+        info "NetworkManager no activo (posible fallback) -- arrancandolo para la fase de perfiles"
+        systemctl unmask NetworkManager 2>/dev/null || true
+        systemctl enable NetworkManager 2>/dev/null || true
+        systemctl start  NetworkManager 2>/dev/null || true
+    fi
+
     nm_require
 
     local existing
