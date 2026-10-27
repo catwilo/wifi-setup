@@ -141,6 +141,16 @@ _root_phase() {
         _idem_ok=0
     fi
 
+    local _idem_resolv=""
+    local _resolv_stub="/run/systemd/resolve/stub-resolv.conf"
+    if [[ -L /etc/resolv.conf ]] \
+       && [[ "$(readlink -f /etc/resolv.conf 2>/dev/null || true)" == "${_resolv_stub}" ]]; then
+        _idem_resolv="symlink ok"
+    else
+        _idem_resolv="no symlink"
+        _idem_ok=0
+    fi
+
     # Unit de boot-select: si no existe o no declara wait-online, el
     # install no es idempotente -- se regenera al reejecutar.
     local _boot_unit="/etc/systemd/system/wifi-setup-radio-boot.service"
@@ -160,6 +170,7 @@ _root_phase() {
         info "  symlink:        ${_idem_symlink}"
         info "  install.state:  ${_idem_state}"
         info "  systemd-resolved: ${_idem_resolved}"
+        info "  resolv.conf:    ${_idem_resolv}"
         info "  boot-select:    ${_idem_boot}"
         info ""
         info "para forzar reinstalacion completa: borra ${STATE_DIR}/install.state y vuelve a correr"
@@ -335,6 +346,11 @@ _root_phase() {
     echo ""
     section "VPN (Tailscale)"
     vpn_install
+    # vpn_install ya apaga accept-dns (Tailscale deja de escribir
+    # /etc/resolv.conf). Si tailscaled habia reescrito el archivo en una
+    # corrida previa antes de nuestra correccion, el symlink quedo roto:
+    # _deps_ensure_resolved es idempotente y lo repara.
+    _deps_ensure_resolved
 
     # ---------------------------------------------------------------------
     # 6. Symlink + state

@@ -18,6 +18,21 @@ VPN_TS_SCRIPT_URL="https://tailscale.com/install.sh"
 VPN_TS_SCRIPT_PATH="/tmp/wifisetup.tailscale-install.sh"
 
 # ---------------------------------------------------------------------------
+# _vpn_disable_dns -- Tailscale no toma el control del resolver.
+#
+# systemd-resolved es el dueno del DNS (ver _deps_ensure_resolved en
+# lib/deps.sh). Con accept-dns=true (default), tailscaled reescribe
+# /etc/resolv.conf y pisa el symlink a stub-resolv.conf: los nombres
+# dejan de resolver aunque el resto de la red funcione. Ese es el sintoma
+# reportado. Idempotente: si el binario no existe, no hace nada.
+# ---------------------------------------------------------------------------
+_vpn_disable_dns() {
+    command -v tailscale >/dev/null 2>&1 || return 0
+    tailscale set --accept-dns=false \
+        || warn "tailscale set --accept-dns=false fallo (reintenta: sudo tailscale set --accept-dns=false)"
+}
+
+# ---------------------------------------------------------------------------
 # vpn_install -- instala Tailscale si falta. Idempotente.
 # ---------------------------------------------------------------------------
 vpn_install() {
@@ -25,6 +40,7 @@ vpn_install() {
         info "tailscale ya instalado: $(tailscale version 2>/dev/null | head -1)"
         systemctl enable tailscaled 2>/dev/null || true
         systemctl start  tailscaled 2>/dev/null || true
+        _vpn_disable_dns
         return 0
     fi
 
@@ -48,7 +64,8 @@ vpn_install() {
     rm -f "${VPN_TS_SCRIPT_PATH}"
     systemctl enable tailscaled 2>/dev/null || true
     systemctl start  tailscaled 2>/dev/null || true
-    ok "tailscale instalado y daemon activo (sin conectar)"
+    _vpn_disable_dns
+    ok "tailscale instalado y daemon activo (sin conectar, sin tocar DNS)"
 }
 
 # ---------------------------------------------------------------------------
