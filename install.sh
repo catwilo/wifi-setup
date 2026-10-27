@@ -468,16 +468,20 @@ EOF
         _chk "dhcpcd disabled" 0
     fi
 
-    # Cada antena configurada con IP
-    local _if _ip
-    for _if in "${_ifaces[@]}"; do
-        _ip="$(ip -4 -o addr show "${_if}" 2>/dev/null | awk '{print $4}' | head -1)"
-        if [[ -n "${_ip}" ]]; then
-            _chk "antena ${_if} con IP (${_ip})" 1
-        else
-            _chk "antena ${_if} con IP" 0
-        fi
-    done
+    # PRIMARY debe tener IP al terminar la instalacion; SECONDARY no,
+    # por diseno: sus perfiles quedan con autoconnect=no y la antena
+    # duerme hasta que el usuario la use (wifi connect <ssid> <iface>).
+    local _ip
+    _ip="$(ip -4 -o addr show "${WIFI_PRIMARY}" 2>/dev/null | awk '{print $4}' | head -1)"
+    if [[ -n "${_ip}" ]]; then
+        _chk "antena ${WIFI_PRIMARY} (primary) con IP (${_ip})" 1
+    else
+        _chk "antena ${WIFI_PRIMARY} (primary) con IP" 0
+    fi
+    if [[ -n "${WIFI_SECONDARY}" ]]; then
+        printf '  %s[INFO]%s antena %s (secondary) dormida por diseno (autoconnect=no)\n' \
+            "${C_CYAN}" "${C_RESET}" "${WIFI_SECONDARY}" >&2
+    fi
 
     # Conectividad
     if ping -c1 -W2 1.1.1.1 >/dev/null 2>&1; then
