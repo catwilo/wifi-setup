@@ -44,6 +44,42 @@ install_pkg() {
 }
 
 # ---------------------------------------------------------------------------
+# _deps_ensure_resolved -- DNS via systemd-resolved, convencion Debian.
+# Instala el paquete si falta, habilita la unidad, y symlinkea
+# /etc/resolv.conf -> /run/systemd/resolve/stub-resolv.conf. Idempotente:
+# si /etc/resolv.conf ya apunta al mismo target, no se toca; si es un
+# archivo regular (NM o iwd lo escribieron), se respalda antes de reemplazarlo.
+# ---------------------------------------------------------------------------
+_deps_ensure_resolved() {
+    install_pkg resolvectl systemd-resolved
+    systemctl enable systemd-resolved >/dev/null 2>&1 || true
+    systemctl start  systemd-resolved >/dev/null 2>&1 || true
+
+    local target="/run/systemd/resolve/stub-resolv.conf"
+    local current=""
+    if [[ -L /etc/resolv.conf ]]; then
+        current="$(readlink -f /etc/resolv.conf 2>/dev/null || true)"
+    fi
+    if [[ "${current}" == "${target}" ]]; then
+        info "resolv.conf: ya apunta a ${target}"
+    else
+        if [[ -e /etc/resolv.conf && ! -L /etc/resolv.conf ]]; then
+            bak="/etc/resolv.conf.bak.$(date +%s)"
+            cp -a /etc/resolv.conf "${bak}"
+            info "resolv.conf: respaldo en ${bak}"
+        fi
+        ln -sfn "${target}" /etc/resolv.conf
+        ok "resolv.conf -> ${target}"
+    fi
+
+    if [[ "$(systemctl is-enabled systemd-resolved 2>/dev/null || true)" == "enabled" ]]; then
+        info "systemd-resolved: enabled"
+    else
+        warn "systemd-resolved: no quedo enabled (revisa: systemctl status systemd-resolved)"
+    fi
+}
+
+# ---------------------------------------------------------------------------
 # install_deps -- todas las dependencias del stack NM.
 # ---------------------------------------------------------------------------
 install_deps() {
@@ -55,6 +91,7 @@ install_deps() {
     install_pkg ip               iproute2
     install_pkg curl             curl
     install_pkg ping             iputils-ping
+    _deps_ensure_resolved
 
     # Estado del stack segun el diseno:
     #   NM activo + enabled.

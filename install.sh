@@ -133,6 +133,14 @@ _root_phase() {
         _idem_ok=0
     fi
 
+    local _idem_resolved=""
+    if [[ "$(systemctl is-enabled systemd-resolved 2>/dev/null || true)" == "enabled" ]]; then
+        _idem_resolved="enabled"
+    else
+        _idem_resolved="no enabled"
+        _idem_ok=0
+    fi
+
     # Unit de boot-select: si no existe o no declara wait-online, el
     # install no es idempotente -- se regenera al reejecutar.
     local _boot_unit="/etc/systemd/system/wifi-setup-radio-boot.service"
@@ -151,6 +159,7 @@ _root_phase() {
         info "  dhcpcd:         ${_idem_dhcpcd}"
         info "  symlink:        ${_idem_symlink}"
         info "  install.state:  ${_idem_state}"
+        info "  systemd-resolved: ${_idem_resolved}"
         info "  boot-select:    ${_idem_boot}"
         info ""
         info "para forzar reinstalacion completa: borra ${STATE_DIR}/install.state y vuelve a correr"

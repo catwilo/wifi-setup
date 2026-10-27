@@ -87,7 +87,7 @@ for name, lines in blocks:
     kept.append((name, lines))
 
 kept.append(("General", ["EnableNetworkConfiguration=true"]))
-kept.append(("Network", ["NameResolvingService=none"]))
+kept.append(("Network", ["NameResolvingService=systemd"]))
 kept.append(("DriverQuirks", ["DefaultInterface=?*"]))
 
 with open(dst, "w", encoding="utf-8") as f:
