@@ -83,8 +83,19 @@ setup() {
 }
 
 @test "networks_cleanup: rechaza correr sin NM activo" {
-    # systemctl is-active NM siempre falla en test -> debe abortar.
-    run networks_cleanup
+    # Forzar systemctl a "inactive" en PATH: el test no depende de si
+    # NM corre en la maquina de test (db1 lo tiene activo tras
+    # install.sh; tx1 no tiene systemd).
+    local fakebin="$BATS_TEST_TMPDIR/fakebin"
+    mkdir -p "$fakebin"
+    cat > "$fakebin/systemctl" <<'EOS'
+#!/usr/bin/env bash
+[[ "$1" == "is-active" ]] && exit 3
+exit 0
+EOS
+    chmod +x "$fakebin/systemctl"
+
+    PATH="$fakebin:$PATH" run networks_cleanup
     [ "$status" -ne 0 ]
     [[ "$output" == *"requiere NM activo"* ]]
 
