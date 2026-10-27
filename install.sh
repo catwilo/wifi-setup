@@ -345,6 +345,15 @@ _root_phase() {
 
     ok "NetworkManager activo, ${WIFI_PRIMARY} con IP ${ip}"
 
+    # Migracion a NM exitosa: fallback.state (estado previo de NM/iwd
+    # guardado por fallback_on) ya no aplica. Sin este rm, `wifi
+    # fallback status` mostraba un state que ya no corresponde y futuras
+    # llamadas a fallback_off podian intentar restaurar algo inexistente.
+    if [[ -f "${STATE_DIR}/fallback.state" ]]; then
+        rm -f "${STATE_DIR}/fallback.state"
+        info "fallback.state eliminado (migracion a NM exitosa)"
+    fi
+
     # ---------------------------------------------------------------------
     # 4. SSH hardening
     # ---------------------------------------------------------------------

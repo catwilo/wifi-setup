@@ -114,6 +114,19 @@ sweep_legacy_install() {
         found=1
     fi
 
+    # 1b. Unit renombrada: wifi-setup-boot-select -> wifi-setup-radio-boot.
+    # La version nueva se llama wifi-setup-radio-boot; la vieja quedo
+    # enabled en maquinas instaladas antes del rename y competia con la
+    # nueva al boot (dos servicios intentando fallback de antena).
+    local _old_unit="/etc/systemd/system/wifi-setup-boot-select.service"
+    if [[ -e "${_old_unit}" ]]; then
+        systemctl stop    wifi-setup-boot-select 2>/dev/null || true
+        systemctl disable wifi-setup-boot-select 2>/dev/null || true
+        rm -f "${_old_unit}"
+        found=1
+        info "unit legacy eliminada: wifi-setup-boot-select (renombrada a wifi-setup-radio-boot)"
+    fi
+
     # 2. Binarios sueltos en /usr/local/bin
     local b
     for b in wifi-panic wfs wifi-status wifi-list wifi-passwd wifi-showpass; do
