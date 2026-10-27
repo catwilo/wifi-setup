@@ -165,7 +165,7 @@ networks_pull_nm() {
                 # el del store viejo; si no, default conservador.
                 a="${ssid_iface_auto[${s}|${i}]:-}"
                 if [[ -z "${a}" ]]; then
-                    a="${old_auto[${s}|${i}]:-no}"
+                    a="${old_auto[${s}|${i}]:-yes}"
                 fi
                 p="${ssid_iface_prio[${s}|${i}]:-}"
                 if [[ -z "${p}" ]]; then

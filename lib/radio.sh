@@ -157,6 +157,40 @@ radio_list() {
 }
 
 # ---------------------------------------------------------------------------
+# radio_apply_autoconnect -- alinea autoconnect con el rol actual.
+#
+# PRIMARY -> todos sus perfiles WiFi en autoconnect=yes.
+# SECONDARY -> todos sus perfiles WiFi en autoconnect=no.
+#
+# El rol es la unica palanca automatica sobre autoconnect. Ningun otro
+# subcomando lo escribe. El override manual del usuario es
+# `wifi autoconnect set <perfil> on|off`; ese valor persiste hasta el
+# proximo cambio de rol. Para usar un SSID de SECONDARY ahora:
+# `wifi connect <ssid> <iface>` funciona igual (nm_device_connect ignora
+# autoconnect=no).
+# ---------------------------------------------------------------------------
+radio_apply_autoconnect() {
+    _radio_load_state
+    local primary="${RADIO_PRIMARY:-}" secondary="${RADIO_SECONDARY:-}"
+    [[ -n "${primary}" || -n "${secondary}" ]] || return 0
+
+    local n iface target applied=0
+    while IFS= read -r n; do
+        [[ -n "${n}" ]] || continue
+        iface="$(nm_con_get "${n}" connection.interface-name 2>/dev/null | head -1 || true)"
+        [[ -n "${iface}" ]] || continue
+        target=""
+        [[ "${iface}" == "${primary}"   ]] && target="yes"
+        [[ "${iface}" == "${secondary}" ]] && target="no"
+        [[ -n "${target}" ]] || continue
+        nm_con_set_autoconnect "${n}" "${target}" >/dev/null 2>&1 || continue
+        applied=$((applied + 1))
+    done < <(nmcli -t -f NAME,TYPE con show 2>/dev/null \
+        | awk -F: '$2=="802-11-wireless"{print $1}')
+    info "autoconnect: ${applied} perfil(es) alineados (primary=${primary:-none} secondary=${secondary:-none})"
+}
+
+# ---------------------------------------------------------------------------
 # radio_set_primary <iface> -- persistente.
 # ---------------------------------------------------------------------------
 radio_set_primary() {
@@ -171,6 +205,7 @@ radio_set_primary() {
     RADIO_PRIMARY="${iface}"
     _radio_save_state
     radio_sync_priorities
+    radio_apply_autoconnect
     ok "PRIMARY persistente: ${iface} (secondary=${RADIO_SECONDARY:-none})"
 }
 
@@ -189,6 +224,7 @@ radio_set_secondary() {
     RADIO_SECONDARY="${iface}"
     _radio_save_state
     radio_sync_priorities
+    radio_apply_autoconnect
     ok "SECONDARY persistente: ${iface} (primary=${RADIO_PRIMARY:-none})"
 }
 
@@ -251,6 +287,18 @@ radio_use() {
         mkdir -p "${STATE_DIR}"
         printf 'SESSION_OVERRIDE="%s"\n' "${iface}" > "${RADIO_SESSION_FILE}"
         chmod 600 "${RADIO_SESSION_FILE}"
+        # Con --persist, la iface elegida pasa a ser la unica activa: se
+        # promueve a PRIMARY y la otra pasa a SECONDARY (o se limpia).
+        local _other
+        RADIO_SECONDARY=""
+        while IFS= read -r _other; do
+            [[ -n "${_other}" && "${_other}" != "${iface}" ]] || continue
+            RADIO_SECONDARY="${_other}"
+            break
+        done < <(radio_ifaces)
+        RADIO_PRIMARY="${iface}"
+        _radio_save_state
+        radio_apply_autoconnect
         ok "solo ${iface} activa, persistente"
     else
         ok "solo ${iface} activa (no persiste -- reboot vuelve a config previa)"
@@ -386,23 +434,20 @@ radio_down() {
         info "${iface} sin conexion activa"
     fi
 
-    # 2) Con --persist: autoconnect=off en TODOS los perfiles de esa iface.
-    #    Bajar solo el activo dejaria los demas listos para reconectar en
-    #    el proximo boot/scan, que es justo lo que --persist evita.
+    # Con --persist, la iface deja de ser PRIMARY si lo era. El flag ya no
+    # toca autoconnect por perfil: eso es territorio del rol
+    # (radio_apply_autoconnect) y del override manual del usuario
+    # (wifi autoconnect set). Aqui solo se ajusta el rol persistido.
     if [[ "${persist}" -eq 1 ]]; then
-        local n iname count=0
-        while IFS= read -r n; do
-            [[ -n "${n}" ]] || continue
-            iname="$(nmcli -t -g connection.interface-name con show "${n}" 2>/dev/null || true)"
-            [[ "${iname}" == "${iface}" ]] || continue
-            nm_con_set_autoconnect "${n}" off 2>/dev/null || true
-            local _ssid
-            _ssid="$(nmcli -t -g 802-11-wireless.ssid con show "${n}" 2>/dev/null | head -1 || true)"
-            [[ -n "${_ssid}" ]] && _radio_db_set_autoconnect "${_ssid}" "${iface}" "no"
-            count=$((count + 1))
-        done < <(nmcli -t -f NAME,TYPE con show 2>/dev/null \
-            | awk -F: '$2=="802-11-wireless"{print $1}')
-        ok "autoconnect OFF en ${count} perfil(es) de ${iface}"
+        _radio_load_state
+        if [[ "${iface}" == "${RADIO_PRIMARY}" ]]; then
+            RADIO_PRIMARY=""
+            _radio_save_state
+            radio_apply_autoconnect
+            info "${iface} ya no es PRIMARY (sin PRIMARY persistida)"
+        else
+            info "${iface} no era PRIMARY -- nada que persistir"
+        fi
     fi
 }
 

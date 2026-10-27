@@ -257,6 +257,7 @@ _root_phase() {
     RADIO_SECONDARY="${WIFI_SECONDARY}"
     _radio_save_state
     radio_sync_priorities
+    radio_apply_autoconnect
 
     ok "perfiles WiFi listos -- NM tiene con que reconectar"
 
