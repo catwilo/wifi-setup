@@ -172,6 +172,15 @@ _root_phase() {
         _idem_ok=0
     fi
 
+    # wpa_supplicant@.service (template per-iface): udev lo dispara al
+    # ver una antena y compite con el backend de NM. Si no esta masked,
+    # el install no esta completo.
+    if [[ "$(systemctl is-enabled wpa_supplicant@.service 2>/dev/null || true)" == "masked" ]]; then
+        : # ya enmascarado
+    else
+        _idem_ok=0
+    fi
+
     if [[ "${_idem_ok}" -eq 1 ]]; then
         ok "wifi-setup ya instalado -- nada que hacer"
         info "  NetworkManager: ${_idem_nm}"
@@ -307,6 +316,21 @@ _root_phase() {
     info "parando dhcpcd (NM trae su propio cliente)..."
     systemctl stop    dhcpcd 2>/dev/null || true
     systemctl disable dhcpcd 2>/dev/null || true
+
+    # wpa_supplicant@<iface> es el template per-iface de Debian: udev lo
+    # dispara al ver una antena WiFi y compite con el wpa_supplicant
+    # global que NM controla por D-Bus. En una maquina con NM al mando
+    # queda failed y no aporta nada. Enmascarar el template bloquea
+    # nuevas instancias; wpa_supplicant.service (global) sigue intacto
+    # para NM.
+    info "enmascarando wpa_supplicant@.service (NM maneja su propio backend)..."
+    systemctl mask wpa_supplicant@.service 2>/dev/null || true
+    local _wpa_inst
+    while IFS= read -r _wpa_inst; do
+        [[ -n "${_wpa_inst}" ]] || continue
+        systemctl disable "${_wpa_inst}" 2>/dev/null || true
+        systemctl reset-failed "${_wpa_inst}" 2>/dev/null || true
+    done < <(systemctl list-units --all --plain --no-legend 'wpa_supplicant@*' 2>/dev/null | awk '{print $1}')
 
     info "parando systemd-networkd..."
     systemctl stop    systemd-networkd 2>/dev/null || true
