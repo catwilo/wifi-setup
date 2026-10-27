@@ -398,7 +398,7 @@ _root_phase() {
     # SECONDARY. Una sola vez por arranque; no interfiere con runtime.
     cat > /etc/systemd/system/wifi-setup-radio-boot.service <<EOF_SVC
 [Unit]
-Description=wifi-setup boot-select (fallback de antena al arranque)
+Description=wifi-setup radio boot (fallback de antena al arranque)
 After=NetworkManager.service NetworkManager-wait-online.service
 Wants=NetworkManager.service NetworkManager-wait-online.service
 ConditionPathExists=${WIFI_BIN}
