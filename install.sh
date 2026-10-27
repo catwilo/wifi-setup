@@ -151,7 +151,7 @@ _root_phase() {
         _idem_ok=0
     fi
 
-    # Unit de boot-select: si no existe o no declara wait-online, el
+    # Unit de radio-boot: si no existe o no declara wait-online, el
     # install no es idempotente -- se regenera al reejecutar.
     local _boot_unit="/etc/systemd/system/wifi-setup-radio-boot.service"
     if [[ -f "${_boot_unit}" ]] \
@@ -159,6 +159,16 @@ _root_phase() {
         _idem_boot="OK"
     else
         _idem_boot="pendiente"
+        _idem_ok=0
+    fi
+
+    # Unit legacy: wifi-setup-boot-select.service (nombre previo al
+    # rename). Si sigue en disco, el sweep no corrio nunca en esta
+    # maquina y hay dos servicios compitiendo al boot. Declarar la
+    # instalacion como incompleta fuerza el sweep.
+    local _legacy_boot="/etc/systemd/system/wifi-setup-boot-select.service"
+    if [[ -e "${_legacy_boot}" ]]; then
+        _idem_boot="${_idem_boot} + legacy pendiente"
         _idem_ok=0
     fi
 
