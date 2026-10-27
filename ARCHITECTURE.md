@@ -6,7 +6,7 @@
     wpa_supplicant         backend WiFi de NM (por defecto)
     iwd                    fallback con DHCP integrado (`wifi fallback on`)
     Tailscale              VPN (instalado, apagado hasta `wifi vpn up`)
-    Tailscale              VPN (instalado, apagado hasta `wifi vpn up`)
+    systemd-resolved       DNS stub (127.0.0.53); dueno de /etc/resolv.conf
 
 En modo backbone no se usa dhcpcd ni systemd-networkd. En modo fallback
 (`wifi fallback on`) iwd hace DHCP por si mismo -- DHCP integrado via
@@ -74,11 +74,11 @@ antes de tocar libs de negocio.
 
     networks.sh         Store central y UNICO de redes WiFi. TSV con una
                         fila por (ssid, iface). Fuente de verdad: add y
-                        passwd escriben aqui primero, luego propagan a
-                        NM (keyfile) e iwd (/var/lib/iwd/<ssid>.psk).
-                        merge/import-iwd alimentan la DB; sync/apply
-                        propagan a los backends; export/import mueven la
-                        DB entre equipos; prune limpia filas huerfanas.
+                        password set escriben aqui primero, luego
+                        networks_apply propaga a NM (keyfile) e iwd
+                        (/var/lib/iwd/<ssid>.psk). pull nm / pull iwd
+                        alimentan la DB; export/import mueven la DB entre
+                        equipos; cleanup limpia filas huerfanas.
 
     lan.sh              Cable ethernet. Perfiles NM (manual/shared/auto) con
                         autoconnect=off. Activacion manual con `wifi lan up`.
@@ -93,7 +93,6 @@ antes de tocar libs de negocio.
     fallback.sh         Alterna entre NM (backbone) e iwd (fallback con DHCP
                         integrado). fallback_on/off/status. Guarda el estado
                         previo en fallback.state para restauracion exacta.
-    deps.sh             Instalacion apt: NetworkManager + iwd + utilidades.
 
 ## Flujo de `install.sh`
 
@@ -101,12 +100,18 @@ antes de tocar libs de negocio.
     -> relaunch en tmux 'wifi-setup' (supervivencia SSH)
     -> limpieza previa (idempotente)
     -> deteccion: SSH iface + antenas WiFi (USB=PRIMARY, nativa=SECONDARY)
-    -> install_deps (NM + iwd + utilities)
-    -> migracion stack: stop iwd/dhcpcd/networkd, start NM
+    -> install_deps (NM + iwd + utilities + systemd-resolved)
+    -> _deps_ensure_resolved (systemd-resolved enabled, symlink
+       /etc/resolv.conf -> /run/systemd/resolve/stub-resolv.conf)
+    -> si NM no esta activo (maquina venia en fallback): unmask + start
     -> prompts SSID/PSK (solo si no hay perfiles previos)
     -> crear perfiles NM por antena + persistir roles
+    -> radio_apply_autoconnect (PRIMARY=yes, SECONDARY=no)
+    -> migracion stack: stop iwd/dhcpcd/networkd, start NM
     -> configure_ssh
-    -> vpn_install (daemon activo, sin conectar)
+    -> vpn_install (daemon activo, sin conectar) + _vpn_disable_dns
+       (tailscale set --accept-dns=false; no reescribe resolv.conf)
+    -> _deps_ensure_resolved (repara el symlink si tailscaled lo piso)
     -> symlink /usr/local/bin/wifi -> repo/bin/wifi
     -> guardar install.state + checks.sh
 
@@ -115,26 +120,28 @@ NO conecta Tailscale (eso es `wifi vpn up`).
 
 ## Flujo de `wifi <cmd>` (runtime)
 
-    wifi status         NM + antenas + conexiones + LAN + VPN + internet
-    wifi ifaces         inventario fisico de antenas (kernel + NM)
-    wifi scan [--iface X]  escaneo de redes visibles ahora
-    wifi radio *        antenas: list/primary/secondary/use/up/down
-    wifi add [<ssid>]   crear perfil + conectar (picker fzf sin <ssid>)
-    wifi networks *     store: list/show/merge/sync/import-iwd/export/import/prune
-    wifi rename         renombrar un perfil NM
-    wifi setpriority    cambiar prioridad de autoconnect
-    wifi delete         borrar un perfil + filas de la DB
-    wifi showpass       ver PSK (DB -> NM -> iwd)
-    wifi switch <ssid>  activar perfil guardado
-    wifi passwd <profile|ssid>  cambiar PSK y reconectar
-    wifi fallback *     alternar NM (backbone) e iwd (fallback)
-    wifi lan setup ...  crear perfil del cable (NO activar)
-    wifi lan up|down    activar/desactivar perfil LAN
-    wifi vpn up|down    conectar/desconectar Tailscale
-    wifi monitor on|off cambiar iface a/desde modo monitor
-    wifi doctor [--fix] diagnostico + auto-fix
-    wifi panic          reiniciar NM + reconectar antenas
-    wifi panic          reiniciar NM + reconectar antenas
+    wifi status           NM + antenas + conexiones + LAN + VPN + internet
+    wifi interfaces       inventario fisico de antenas (kernel + NM)
+    wifi scan [--iface X] escaneo de redes visibles ahora
+    wifi radio *          antenas: list/primary/secondary/use/session/up/down/boot
+    wifi add [<ssid>]     crear perfil + conectar (picker fzf sin <ssid>)
+    wifi networks *       store: list/show/pull nm|iwd/export/import/cleanup
+    wifi connect <ssid>   activar perfil guardado (nm_device_connect)
+    wifi profile rename   renombrar un perfil NM
+    wifi priority set     cambiar prioridad de autoconnect
+    wifi autoconnect set  override manual de autoconnect en un perfil
+    wifi delete           borrar un perfil + filas de la DB
+    wifi password show    ver PSK (DB -> NM -> iwd)
+    wifi password set     cambiar PSK y reconectar
+    wifi mac set|show     clonar o ver MAC por perfil
+    wifi fallback *       alternar NM (backbone) e iwd (fallback)
+    wifi lan setup ...    crear perfil del cable (NO activar)
+    wifi lan up|down      activar/desactivar perfil LAN
+    wifi vpn up|down      conectar/desconectar Tailscale
+    wifi monitor on|off   cambiar iface a/desde modo monitor
+    wifi usb *            status/apply/edit del rename USB por MAC
+    wifi doctor [--fix]   diagnostico + auto-fix
+    wifi panic            reiniciar NM + reconectar antenas
 
 Cada subcomando acepta -h/--help. El dispatcher entrega el control a
 lib/help.sh antes de tocar el lib de negocio.
@@ -150,7 +157,6 @@ lib/help.sh antes de tocar el lib de negocio.
     STATE_DIR/fallback.state        estado previo de NM/iwd antes de fallback_on
     STATE_DIR/last-scan.txt         lista de SSID del ultimo scan (con comillas)
     CONFIG_DIR/usb-names.conf       mapeos MAC -> nombre de iface USB
-    LOG_DIR/wifi-setup.log          log general
     LOG_DIR/wifi-setup.log          log general
 
 ## Decisiones no obvias
@@ -202,4 +208,42 @@ EnableNetworkConfiguration=true en /etc/iwd/main.conf habilita el cliente
 DHCP integrado de iwd. `fallback_on` la escribe si falta, preservando el
 resto del archivo. `_fallback_wait_ip` confirma la asignacion y avisa si
 iwd no conoce la red (requiere `iwctl station <iface> connect <ssid>`).
-dispatch.
+
+### Por que tailscale no controla DNS
+
+Tailscale, con `--accept-dns=true` (default), reescribe /etc/resolv.conf
+y pisa el symlink a stub-resolv.conf: los nombres dejan de resolver
+aunque el resto de la red funcione. El instalador corre
+`tailscale set --accept-dns=false` para que systemd-resolved siga
+siendo el dueno del DNS. Ese es el unico dueno de /etc/resolv.conf.
+
+### Por que autoconnect lo decide el rol
+
+`autoconnect=yes` no es un campo que el usuario setea por perfil: es
+una consecuencia del rol. PRIMARY -> todos sus perfiles `yes`;
+SECONDARY -> todos `no`. Cambiar rol (`radio primary/secondary/use
+--persist`) reescribe el campo. Solo `wifi autoconnect set` lo
+sobreescribe manualmente, y persiste hasta el proximo cambio de rol.
+`wifi connect <ssid>` funciona igual con `autoconnect=no`: usa
+`nmcli device connect`, que ignora `autoconnect`.
+
+## Entorno y operacion
+
+Reglas de trabajo del repo (aplican a cualquier agente o humano que lo
+edite):
+
+- Editar en tx1 (Termux, celular, 1 GB RAM). `mkit`, `ut`, `nya` se
+  corren desde tx1.
+- Tests (`bash tests/run.sh`) corren en db1 (Debian, computador), no
+  en tx1. Si db1 no responde, se usa tx1 como fallback documentado.
+- Distribuir wifi-setup solo a db1. tx2 no es Debian: el tool no
+  aplica ahi.
+- Instalar siempre con `install.sh`. No hay parches manuales, symlinks
+  manuales ni `systemctl` a mano para reparar el estado.
+- Si `install.sh` falla en db1, leer
+  `~/.local/state/wifi-setup/install-*.log` y `/tmp/wifi-install.out`
+  antes de re-ejecutar.
+- `nina status` es el unico comando que lista nodos. Formato:
+  `alias ip user port kind os`. `kind` es `celular` o `computador`.
+  `nya` lo consume directamente.
+
