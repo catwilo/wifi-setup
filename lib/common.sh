@@ -123,6 +123,10 @@ sweep_legacy_install() {
         systemctl stop    wifi-setup-boot-select 2>/dev/null || true
         systemctl disable wifi-setup-boot-select 2>/dev/null || true
         rm -f "${_old_unit}"
+        # systemd mantiene el unit failed en memoria tras rm; reset-failed
+        # limpia ese estado para que no aparezca como "failed" en cada
+        # `systemctl status`.
+        systemctl reset-failed wifi-setup-boot-select 2>/dev/null || true
         found=1
         info "unit legacy eliminada: wifi-setup-boot-select (renombrada a wifi-setup-radio-boot)"
     fi
