@@ -49,8 +49,10 @@ _fallback_ensure_iwd_netconf() {
     # iwd lee solo la primera y descarta la segunda -> DHCP off -> sin IP
     # tras fallback on. Nuevo algoritmo: nunca duplica una seccion; si
     # no existe, la crea al final; si existe, inserta las claves dentro.
-    # DefaultInterface=?* se elimina siempre: es sintaxis invalida para
-    # iwd y rompe el bind en algunos drivers.
+    # [DriverQuirks] DefaultInterface=?* impide que iwd destruya la
+    # interfaz al pararse (systemctl stop iwd). Sin esto, el driver
+    # borra wlan0 del kernel, NM arranca y no la ve, timeout. ?* es un
+    # glob que matchea cualquier driver.
     python3 - "${conf}" "${tmp}" <<'PY_IWD_CONF'
 import os, sys
 
@@ -59,6 +61,7 @@ src, dst = sys.argv[1], sys.argv[2]
 CANONICAL = {
     "General": [("EnableNetworkConfiguration", "true")],
     "Network": [("NameResolvingService", "systemd")],
+    "DriverQuirks": [("DefaultInterface", "?*")],
 }
 MANAGED_KEYS = {"EnableNetworkConfiguration", "NameResolvingService", "DefaultInterface"}
 
