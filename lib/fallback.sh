@@ -184,6 +184,78 @@ fallback_status() {
 }
 
 # fallback_on -- apagar NM, dejar iwd al mando con DHCP integrado.
+# _fallback_fix_routes -- garantiza subred + default en la antena WiFi
+# activa tras fallback on. Idempotente.
+#
+# Motivo: iwd con algunos drivers (brcmsmac) asigna IP via su DHCP pero
+# no instala la ruta de subred. Sin ella, el kernel rechaza la default
+# con "Nexthop has invalid gateway" y el nodo queda sin internet aunque
+# la IP este asignada.
+_fallback_fix_routes() {
+    local w iface="" ipx cidr prefix a b c d mask ipn netn subnet gw_fallback gw current_gw
+    for w in /sys/class/net/*/wireless; do
+        [ -d "${w}" ] || continue
+        w="${w%/wireless}"; w="${w##*/}"
+        ipx="$(ip -4 -o addr show "${w}" 2>/dev/null | awk '{print $4}' | head -1)"
+        if [[ -n "${ipx}" ]]; then
+            iface="${w}"
+            break
+        fi
+    done
+    if [[ -z "${iface}" ]]; then
+        info "fix-routes: ninguna antena con IP, nada que hacer"
+        return 0
+    fi
+
+    cidr="${ipx}"
+    prefix="${cidr#*/}"
+    cidr="${cidr%/*}"
+    a="${cidr%%.*}"; cidr="${cidr#*.}"
+    b="${cidr%%.*}"; cidr="${cidr#*.}"
+    c="${cidr%%.*}"; d="${cidr##*.}"
+
+    case "${prefix}" in
+        24) subnet="${a}.${b}.${c}.0/24"; gw_fallback="${a}.${b}.${c}.1" ;;
+        16) subnet="${a}.${b}.0.0/16";    gw_fallback="${a}.${b}.0.1" ;;
+        8)  subnet="${a}.0.0.0/8";        gw_fallback="${a}.0.0.1" ;;
+        *)
+            mask=$(( (0xFFFFFFFF << (32-prefix)) & 0xFFFFFFFF ))
+            ipn=$(( (a<<24)+(b<<16)+(c<<8)+d ))
+            netn=$(( ipn & mask ))
+            subnet="$(( (netn>>24)&255 )).$(( (netn>>16)&255 )).$(( (netn>>8)&255 )).$(( netn&255 ))/${prefix}"
+            gw_fallback=""
+            ;;
+    esac
+
+    if ip -4 route show | grep -qF "${subnet} dev ${iface}"; then
+        info "fix-routes: subred ${subnet} ya presente en ${iface}"
+    else
+        if ip route add "${subnet}" dev "${iface}" 2>/dev/null; then
+            ok "fix-routes: subred ${subnet} anadida en ${iface}"
+        else
+            warn "fix-routes: no se pudo anadir subred ${subnet} en ${iface}"
+        fi
+    fi
+
+    gw="$(iwctl station "${iface}" show 2>/dev/null \
+        | awk -F': ' '/Gateway/ {gsub(/ /,"",$2); print $2; exit}')"
+    [[ -z "${gw}" ]] && gw="${gw_fallback}"
+    [[ -n "${gw}" ]] || { info "fix-routes: sin gateway conocido, default no tocada"; return 0; }
+
+    current_gw="$(ip -4 route show default dev "${iface}" 2>/dev/null | awk '{print $3; exit}')"
+    if [[ -n "${current_gw}" ]]; then
+        info "fix-routes: default ya presente via ${current_gw}"
+        return 0
+    fi
+    if ip route add default via "${gw}" dev "${iface}" 2>/dev/null; then
+        ok "fix-routes: default via ${gw} dev ${iface} anadida"
+    elif ip route add default via "${gw}" dev "${iface}" onlink 2>/dev/null; then
+        ok "fix-routes: default via ${gw} dev ${iface} onlink anadida"
+    else
+        warn "fix-routes: no se pudo anadir default via ${gw} dev ${iface}"
+    fi
+}
+
 fallback_on() {
     # Asegurar config de iwd SIEMPRE, incluso si ya estamos en fallback:
     # asi un 'wifi fallback on' repara el archivo si le falta algo
@@ -197,6 +269,7 @@ fallback_on() {
         info "reincidiendo iwd para aplicar cualquier cambio de config..."
         systemctl restart iwd 2>/dev/null || true
         _fallback_wait_ip 30 || true
+        _fallback_fix_routes || true
         return 0
     fi
 
@@ -230,6 +303,7 @@ fallback_on() {
     ok "iwd activo -- es el gestor WiFi ahora"
 
     _fallback_wait_ip 30 || true
+    _fallback_fix_routes || true
 
     info "conecta con: iwctl station <iface> connect <ssid>"
     info "scan con:    iwctl station <iface> scan"
