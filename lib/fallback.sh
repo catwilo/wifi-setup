@@ -403,10 +403,55 @@ fallback_off() {
     # ------------------------------------------------------------------
     # Paso 6: esperar IP. 45s con progreso cada 3s.
     # ------------------------------------------------------------------
-    info "esperando IP en alguna antena WiFi (max 45s)..."
+    # ------------------------------------------------------------------
+    # Paso 5: reanunciar wlan0 via udev. El driver brcmsmac tarda ~45s
+    # en volver a registrar la iface tras soltarla iwd; sin este trigger
+    # NM no ve wlan0 y el timeout IP dispara sin que NM sea culpable.
+    # ------------------------------------------------------------------
+    info "reanunciando interfaces de red via udev..."
+    udevadm trigger --action=change --subsystem-match=net 2>/dev/null || true
+
+    local _waited_dev=0 _devs=""
+    info "esperando a que NM vea la antena (max 60s)..."
+    while [[ "${_waited_dev}" -lt 60 ]]; do
+        _devs="$(nmcli -t -f DEVICE,TYPE dev status 2>/dev/null | awk -F: '$2=="wifi"{print $1}')"
+        [[ -n "${_devs}" ]] && break
+        sleep 2
+        _waited_dev=$((_waited_dev + 2))
+    done
+    if [[ -z "${_devs}" ]]; then
+        err "NM no ve ninguna antena WiFi tras 60s"
+        _fallback_off_rollback "NM sin antenas visibles"
+        return 1
+    fi
+    ok "NM ve antena(s): $(echo ${_devs})"
+
+    # ------------------------------------------------------------------
+    # Paso 6: activacion explicita del perfil. Tras un cambio de gestor,
+    # NM a veces no dispara autoconnect hasta el siguiente scan.
+    # ------------------------------------------------------------------
+    local _w _if _prof
+    for _w in /sys/class/net/*/wireless; do
+        [ -d "${_w}" ] || continue
+        _if="${_w%/wireless}"; _if="${_if##*/}"
+        ip link set "${_if}" up 2>/dev/null || true
+        nmcli dev set "${_if}" managed yes 2>/dev/null || true
+
+        _prof="$(nmcli -t -f NAME,TYPE,DEVICE con show 2>/dev/null \
+            | awk -F: -v i="${_if}" '$2=="802-11-wireless" && $3==i {print $1; exit}')"
+        if [[ -n "${_prof}" ]]; then
+            info "activando perfil: ${_prof}"
+            nmcli con up "${_prof}" >/dev/null 2>&1 || true
+        else
+            info "sin perfil NM para ${_if} -- device connect"
+            nmcli device connect "${_if}" >/dev/null 2>&1 || true
+        fi
+    done
+
+    info "esperando IP en alguna antena WiFi (max 90s)..."
     printf '  %-10s %-14s %-24s %s\n' "IFACE" "STATE" "CONN" "IP" >&2
     local _ip="" _waited=0
-    while [[ "${_waited}" -lt 45 ]]; do
+    while [[ "${_waited}" -lt 90 ]]; do
         _ip=""
         for _w in /sys/class/net/*/wireless; do
             [ -d "${_w}" ] || continue
@@ -428,8 +473,8 @@ fallback_off() {
     done
 
     if [[ -z "${_ip}" ]]; then
-        warn "ninguna antena obtuvo IP en 45s"
-        _fallback_off_rollback "sin IP tras 45s"
+        warn "ninguna antena obtuvo IP en 90s"
+        _fallback_off_rollback "sin IP tras 90s"
         return 1
     fi
     ok "NM activo, IP asignada: ${_ip}"
