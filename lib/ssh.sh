@@ -1,102 +1,147 @@
 #!/usr/bin/env bash
-# lib/ssh.sh — configuración SSH segura, puerto 22, persistente
+# lib/ssh.sh -- SSH hardening opt-in.
+#
+# Tres funciones, todas idempotentes:
+#   ssh_harden    escribe /etc/ssh/sshd_config.d/99-wifi-setup.conf,
+#                 valida con sshd -t, reinicia ssh. Si sshd -t falla,
+#                 borra el drop-in y aborta sin tocar la sesion.
+#   ssh_status    reporta estado sin tocar nada.
+#   ssh_revert    borra el drop-in, valida, reinicia.
+#
+# El hardening es conservador: solo cambia lo que aporta seguridad sin
+# romper compatibilidad. Los defaults de OpenSSH en Debian 13 son
+# seguros; aqui se endurecen los puntos de mayor impacto.
+#
+# NO toca /etc/ssh/sshd_config base. Todo va al drop-in.
 
-# ---------------------------------------------------------------------------
-# Instalar y asegurar SSH — mejores prácticas
-# ---------------------------------------------------------------------------
-configure_ssh() {
-    info "configurando SSH (puerto 22, hardening, persistente)..."
+SSH_DROPIN="/etc/ssh/sshd_config.d/99-wifi-setup.conf"
 
-    # Instalar si no existe
-    if ! command -v sshd >/dev/null 2>&1; then
-        ensure_apt
-        apt-get install -y --no-install-recommends openssh-server \
-            || die "no se pudo instalar openssh-server — verifica apt y conexión a internet"
-    fi
+_ssh_desired_content() {
+    cat <<'EOF'
+# wifi-setup: SSH hardening (opt-in).
+# Generado por: sudo wifi ssh harden
+# Deshacer con: sudo wifi ssh revert
+#
+# Solo overrides. La configuracion base /etc/ssh/sshd_config no se toca.
 
-    local sshd_conf="/etc/ssh/sshd_config"
-    backup_file "${sshd_conf}"
-
-    # Escribir config de hardening sobre el archivo existente
-    # Usando sshd_config.d para no pisar la config base (más limpio y compatible)
-    mkdir -p /etc/ssh/sshd_config.d
-
-    cat > /etc/ssh/sshd_config.d/99-wifi-setup.conf <<'EOF'
-# wifi-setup: SSH hardening — generado automáticamente
-# No editar manualmente; usar scripts/install.sh para reconfigurar
-
-Port 22
-AddressFamily inet
-
-# Autenticación
+# Autenticacion
 PermitRootLogin prohibit-password
-PasswordAuthentication yes
-PubkeyAuthentication yes
-AuthorizedKeysFile .ssh/authorized_keys
 PermitEmptyPasswords no
 MaxAuthTries 4
 MaxSessions 5
 
-# Seguridad de protocolo
-Protocol 2
+# Forwarding (SSH tunnels para Tailscale y deploys)
 X11Forwarding no
 AllowTcpForwarding yes
 GatewayPorts no
 PermitTunnel no
 
-# Criptografía moderna (compatibilidad amplia pero sin algoritmos débiles)
-KexAlgorithms curve25519-sha256,curve25519-sha256@libssh.org,diffie-hellman-group14-sha256,diffie-hellman-group16-sha512
-Ciphers aes256-gcm@openssh.com,aes128-gcm@openssh.com,aes256-ctr,aes192-ctr,aes128-ctr
-MACs hmac-sha2-256-etm@openssh.com,hmac-sha2-512-etm@openssh.com,umac-128-etm@openssh.com
-
-# Keepalive — evita desconexiones fantasma
+# Sesion
 ClientAliveInterval 60
 ClientAliveCountMax 3
-TCPKeepAlive yes
-
-# Timeout de login
 LoginGraceTime 30
 
-# Logging
-LogLevel VERBOSE
-SyslogFacility AUTH
-
-# DNS lookup (off = conexiones más rápidas)
+# Diagnostico
 UseDNS no
-
-# Compresión (off en redes LAN — ahorra CPU)
-Compression no
+LogLevel VERBOSE
 EOF
+}
 
-    # Asegurar que sshd_config principal incluya el directorio (OpenSSH >= 8.2)
-    if ! grep -q "^Include /etc/ssh/sshd_config.d/\*.conf" "${sshd_conf}" 2>/dev/null; then
-        echo "" >> "${sshd_conf}"
-        echo "Include /etc/ssh/sshd_config.d/*.conf" >> "${sshd_conf}"
-    fi
+_ssh_validate() {
+    sshd -t
+}
 
-    # Validar config antes de reiniciar — evita dejarnos sin SSH
-    if ! sshd -t >/dev/null 2>&1; then
-        err "config SSH inválida — revirtiendo a backup..."
-        # Mostrar el error exacto
-        sshd -t 2>&1 | while read -r line; do err "sshd -t: ${line}"; done
-        # Revertir el archivo problemático
-        rm -f /etc/ssh/sshd_config.d/99-wifi-setup.conf
-        die "sshd -t falló — se revirtió la config. Revisa el log anterior."
-    fi
-
-    # Habilitar y reiniciar
-    systemctl unmask ssh.service 2>/dev/null || true
-    systemctl unmask sshd.service 2>/dev/null || true
-    systemctl enable ssh 2>/dev/null || systemctl enable sshd 2>/dev/null \
-        || die "no se pudo habilitar ssh.service ni sshd.service en systemd"
-    systemctl restart ssh 2>/dev/null || systemctl restart sshd 2>/dev/null \
-        || die "no se pudo reiniciar SSH — verifica: systemctl status ssh"
-
-    # Verificar que quedó activo
+_ssh_restart() {
+    systemctl restart ssh 2>/dev/null \
+        || systemctl restart sshd 2>/dev/null \
+        || die "no se pudo reiniciar ssh/sshd"
     sleep 1
-    if systemctl is-active ssh >/dev/null 2>&1 || systemctl is-active sshd >/dev/null 2>&1; then
-        info "SSH activo en puerto 22, habilitado para arrancar en boot"
-    else
-        die "SSH no quedó activo después del restart — verifica: journalctl -u ssh -n 30"
+    if ! systemctl is-active ssh >/dev/null 2>&1 \
+       && ! systemctl is-active sshd >/dev/null 2>&1; then
+        die "ssh no quedo activo -- revisa: journalctl -u ssh -n 30"
     fi
+}
+
+ssh_harden() {
+    require_root
+    section "SSH hardening"
+
+    if ! command -v sshd >/dev/null 2>&1; then
+        die "openssh-server no instalado -- corre: sudo apt install openssh-server"
+    fi
+
+    mkdir -p /etc/ssh/sshd_config.d
+
+    local desired current
+    desired="$(_ssh_desired_content)"
+    if [[ -f "${SSH_DROPIN}" ]]; then
+        current="$(cat "${SSH_DROPIN}")"
+    else
+        current=""
+    fi
+
+    if [[ "${current}" == "${desired}" ]]; then
+        info "drop-in sin cambios: ${SSH_DROPIN}"
+    else
+        printf '%s\n' "${desired}" > "${SSH_DROPIN}"
+        chmod 644 "${SSH_DROPIN}"
+        ok "drop-in escrito: ${SSH_DROPIN}"
+    fi
+
+    if ! _ssh_validate; then
+        err "sshd -t fallo, borrando drop-in y abortando"
+        rm -f "${SSH_DROPIN}"
+        die "config SSH invalida -- no se aplico nada"
+    fi
+
+    _ssh_restart
+    ok "SSH hardening aplicado y activo"
+}
+
+ssh_status() {
+    section "SSH status"
+
+    if ! command -v sshd >/dev/null 2>&1; then
+        warn "openssh-server no instalado"
+        return 0
+    fi
+
+    local active
+    if systemctl is-active ssh >/dev/null 2>&1; then
+        active="ssh (active)"
+    elif systemctl is-active sshd >/dev/null 2>&1; then
+        active="sshd (active)"
+    else
+        active="inactivo"
+    fi
+    printf '  sshd:     %s\n' "${active}"
+
+    if [[ -f "${SSH_DROPIN}" ]]; then
+        if _ssh_validate >/dev/null 2>&1; then
+            printf '  drop-in:  %s (valido)\n' "${SSH_DROPIN}"
+        else
+            printf '  drop-in:  %s (INVALIDO -- corre: sudo wifi ssh revert)\n' "${SSH_DROPIN}"
+        fi
+    else
+        printf '  drop-in:  no aplicado (corre: sudo wifi ssh harden)\n'
+    fi
+}
+
+ssh_revert() {
+    require_root
+    section "SSH revert"
+
+    if [[ ! -f "${SSH_DROPIN}" ]]; then
+        info "drop-in no existe -- nada que revertir"
+        return 0
+    fi
+
+    rm -f "${SSH_DROPIN}"
+
+    if ! _ssh_validate; then
+        die "sshd -t fallo tras revertir -- revisa /etc/ssh/sshd_config"
+    fi
+
+    _ssh_restart
+    ok "SSH hardening revertido"
 }

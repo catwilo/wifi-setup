@@ -93,22 +93,15 @@ install_deps() {
     install_pkg ping             iputils-ping
     _deps_ensure_resolved
 
-    # Estado del stack segun el diseno:
-    #   NM activo + enabled.
-    #   iwd instalado pero parado + disabled -- fallback manual.
-    systemctl enable NetworkManager  >/dev/null 2>&1 || true
-    systemctl start  NetworkManager  >/dev/null 2>&1 || true
-    systemctl disable iwd            >/dev/null 2>&1 || true
-    systemctl stop    iwd            >/dev/null 2>&1 || true
-
-    # Preparar iwd para fallback: main.conf canonico con DHCP integrado
-    # declarado. Delega en _fallback_ensure_iwd_netconf (fallback.sh) para
-    # que instalacion y runtime usen EXACTAMENTE la misma rutina atomica.
-    # Sin esta unificacion, una instalacion sobre un main.conf ya corrupto
-    # (dos [General], la primera vacia) no se repara y el fallback queda
-    # con DHCP apagado hasta dhcpcd manual.
-    _fallback_ensure_iwd_netconf
-    systemctl stop    iwd            >/dev/null 2>&1 || true
-
-    ok "dependencias instaladas"
+    # Solo paquetes. install NO toca el stack de red:
+    #   - no enciende ni apaga servicios (systemctl)
+    #   - no escribe /etc/iwd/main.conf (eso lo hace wifi fallback on)
+    #   - no migra iwd <-> NetworkManager (eso lo hace wifi fallback on/off)
+    #
+    # El usuario decide el gestor con:
+    #   sudo wifi fallback off   migrar a NetworkManager (con rollback)
+    #   sudo wifi fallback on    migrar a iwd
+    ok "dependencias instaladas (sin tocar el gestor de red)"
+    info "para migrar a NetworkManager: sudo wifi fallback off"
+    info "para migrar a iwd:             sudo wifi fallback on"
 }

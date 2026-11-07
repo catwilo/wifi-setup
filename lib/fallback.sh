@@ -243,115 +243,140 @@ fallback_off() {
         return 0
     fi
 
-    section "Volviendo a NetworkManager (backbone)"
+    section "Volviendo a NetworkManager (backbone, atomico)"
 
-    # Importar antes de parar iwd: las redes que el usuario conocio via
-    # iwctl viven en /var/lib/iwd/*.psk. Se agregan a la DB ahora (solo
-    # lee archivos + escribe TSV, no usa NM). Los perfiles NM se crean
-    # despues de arrancar NM (networks_sync usa nmcli, que necesita NM
-    # corriendo).
-    if command -v iwctl >/dev/null 2>&1; then
+    # ------------------------------------------------------------------
+    # Paso 1: preparar NM (unmask + enable). No lo arrancamos aun.
+    # ------------------------------------------------------------------
+    if [[ "$(systemctl is-enabled NetworkManager 2>/dev/null || true)" == "masked" ]]; then
+        info "desenmascarando NetworkManager..."
+        systemctl unmask NetworkManager 2>/dev/null || true
+    fi
+    systemctl enable NetworkManager 2>/dev/null || true
+
+    # ------------------------------------------------------------------
+    # Paso 2: importar perfiles de iwd ANTES de parar iwd. Solo lee
+    # archivos /var/lib/iwd/*.psk + escribe TSV, no requiere red.
+    # ------------------------------------------------------------------
+    if command -v iwctl >/dev/null 2>&1 && systemctl is-active iwd >/dev/null 2>&1; then
         info "importando redes conocidas por iwd a la DB..."
-        networks_pull_iwd
+        networks_pull_iwd 2>/dev/null || warn "networks_pull_iwd fallo -- continuando"
     fi
 
+    # ------------------------------------------------------------------
+    # Paso 3: parar iwd. Esta es la unica ventana en la que el nodo
+    # puede quedarse sin gestor. Todo lo que sigue es rapido.
+    # ------------------------------------------------------------------
     info "parando iwd..."
     systemctl stop iwd 2>/dev/null || true
-    info "deshabilitando iwd..."
-    systemctl disable iwd 2>/dev/null || true
 
-    info "desenmascarando NetworkManager..."
-    systemctl unmask NetworkManager 2>/dev/null || true
-    info "habilitando NetworkManager..."
-    systemctl enable NetworkManager 2>/dev/null || true
+    # ------------------------------------------------------------------
+    # Paso 4: arrancar NM. Si falla, rollback a iwd.
+    # ------------------------------------------------------------------
     info "arrancando NetworkManager..."
-    systemctl restart NetworkManager 2>/dev/null || true
-
-    if ! systemctl is-active NetworkManager >/dev/null 2>&1; then
-        err "NetworkManager no arranco -- revisa: journalctl -u NetworkManager -n 40"
+    if ! systemctl start NetworkManager 2>/dev/null; then
+        err "NetworkManager no pudo arrancar"
+        _fallback_off_rollback "NM start fallo"
         return 1
     fi
-    ok "NetworkManager activo -- backbone restaurado"
-
-    # Ahora que NM corre, materializar los perfiles desde la DB (incluye
-    # los importados desde iwd). Idempotente: si el perfil ya esta y
-    # coincide, no lo toca.
-    if [[ -f "${STATE_DIR}/networks.tsv" ]]; then
-        info "sincronizando perfiles NM desde la DB..."
-        networks_sync || warn "networks_sync fallo -- NM arrancara sin los perfiles importados"
+    if ! systemctl is-active NetworkManager >/dev/null 2>&1; then
+        err "NetworkManager no quedo activo"
+        _fallback_off_rollback "NM no activo"
+        return 1
     fi
 
-    echo "" >&2
-    info "devices en NM tras sync:"
-    nmcli dev status 2>&1 >&2 || true
-    echo "" >&2
-    info "conexiones activas ahora:"
-    local _act
-    _act="$(nmcli -t -f NAME,DEVICE,TYPE con show --active 2>&1 || true)"
-    if [[ -n "${_act}" ]]; then
-        printf '%s\n' "${_act}" >&2
-    else
-        printf '  (ninguna)\n' >&2
-    fi
-
-    # Reset de las antenas WiFi: al parar iwd las interfaces quedan en un
-    # estado que NM no re-descubre (no dispara evento de re-deteccion).
-    # SOLO 'up' + 'managed yes': 'ip link set down' rompe la USB (el bus
-    # USB se resetea y wlx1 desaparece de /sys). Con UseDefaultInterface
-    # / DefaultInterface=false en /etc/iwd/main.conf, ademas, iwd ya no
-    # destruye la iface al pararse, asi que basta con devolverla a NM.
+    # ------------------------------------------------------------------
+    # Paso 5: devolver interfaces WiFi a NM (up + managed yes).
+    # Con iwd parado, las ifaces pueden haber quedado en estado raro.
+    # ------------------------------------------------------------------
     local _w _if
     for _w in /sys/class/net/*/wireless; do
         [ -d "${_w}" ] || continue
         _if="${_w%/wireless}"; _if="${_if##*/}"
-        info "devolviendo ${_if} a NM..."
         ip link set "${_if}" up 2>/dev/null || true
         nmcli dev set "${_if}" managed yes 2>/dev/null || true
     done
 
-    # Scan + tabla de intentos. Muestra: que redes ve NM ahora, y cada
-    # 2s por 20s, el estado de cada antena + a que red intenta conectar.
-    # Con eso el usuario ve en vivo si NM esta intentando y en que falla.
-    echo "" >&2
-    info "escaneando redes visibles (nmcli dev wifi list)..."
-    nmcli dev wifi list 2>&1 >&2 || warn "scan fallo (NM sin antenas?)"
-
-    echo "" >&2
-    info "siguiendo intentos de conexion (20s)..."
-    printf '  %-10s %-14s %-30s %s\n' "IFACE" "STATE" "CONN" "IP" >&2
-    local _t=0 _any_conn=0
-    while [[ "${_t}" -lt 20 ]]; do
-        _any_conn=0
+    # ------------------------------------------------------------------
+    # Paso 6: esperar IP. 45s con progreso cada 3s.
+    # ------------------------------------------------------------------
+    info "esperando IP en alguna antena WiFi (max 45s)..."
+    printf '  %-10s %-14s %-24s %s\n' "IFACE" "STATE" "CONN" "IP" >&2
+    local _ip="" _waited=0
+    while [[ "${_waited}" -lt 45 ]]; do
+        _ip=""
         for _w in /sys/class/net/*/wireless; do
-            [[ -d "${_w}" ]] || continue
+            [ -d "${_w}" ] || continue
             _if="${_w%/wireless}"; _if="${_if##*/}"
-            local _st _cn _ip
-            _st="$(nmcli -t -f DEVICE,STATE dev status 2>/dev/null | awk -F: -v i="${_if}" '$1==i {print $2; exit}')"
-            _cn="$(nmcli -t -f DEVICE,CONNECTION dev status 2>/dev/null | awk -F: -v i="${_if}" '$1==i {print $2; exit}')"
-            _ip="$(ip -4 -o addr show "${_if}" 2>/dev/null | awk '{print $4}' | head -1)"
-            printf '  %-10s %-14s %-30s %s\n' "${_if}" "${_st:-?}" "${_cn:-—}" "${_ip:-—}" >&2
-            [[ -n "${_cn}" ]] && _any_conn=1
-            [[ -n "${_ip}" ]] && { ok "IP asignada: ${_if} ${_ip}"; _t=999; break; }
+            local _st _cn _ipx
+            _st="$(nmcli -t -f DEVICE,STATE dev status 2>/dev/null \
+                | awk -F: -v i="${_if}" '$1==i {print $2; exit}')"
+            _cn="$(nmcli -t -f DEVICE,CONNECTION dev status 2>/dev/null \
+                | awk -F: -v i="${_if}" '$1==i {print $2; exit}')"
+            _ipx="$(ip -4 -o addr show "${_if}" 2>/dev/null \
+                | awk '{print $4}' | head -1)"
+            printf '  %-10s %-14s %-24s %s\n' \
+                "${_if}" "${_st:-?}" "${_cn:--}" "${_ipx:--}" >&2
+            [[ -n "${_ipx}" ]] && { _ip="${_ipx}"; break; }
         done
-        [[ "${_t}" -eq 999 ]] && break
-        sleep 2
-        _t=$((_t + 2))
+        [[ -n "${_ip}" ]] && break
+        sleep 3
+        _waited=$((_waited + 3))
     done
 
-    if [[ "${_t}" -ne 999 ]]; then
-        echo "" >&2
-        warn "ninguna antena obtuvo IP en 20s"
-        echo "" >&2
-        info "ultimos 8 eventos de NetworkManager (causa del fallo):"
-        journalctl -u NetworkManager -n 8 --no-pager 2>&1 >&2 || true
-        echo "" >&2
-        err "fallback off fallo: NM arranco pero ninguna antena obtuvo IP"
-        info "fallback_state preservado en ${FALLBACK_STATE}"
-        info "siguientes pasos:"
-        info "  wifi doctor"
-        info "  wifi panic"
+    if [[ -z "${_ip}" ]]; then
+        warn "ninguna antena obtuvo IP en 45s"
+        _fallback_off_rollback "sin IP tras 45s"
         return 1
     fi
+    ok "NM activo, IP asignada: ${_ip}"
 
+    # ------------------------------------------------------------------
+    # Paso 7: iwd disable. Ya no hace falta.
+    # ------------------------------------------------------------------
+    systemctl disable iwd 2>/dev/null || true
+
+    # ------------------------------------------------------------------
+    # Paso 8: sincronizar perfiles NM desde la DB (incluye los importados
+    # de iwd). Idempotente: si ya coinciden, no toca.
+    # ------------------------------------------------------------------
+    if [[ -f "${STATE_DIR}/networks.tsv" ]]; then
+        info "sincronizando perfiles NM desde la DB..."
+        networks_sync 2>/dev/null || warn "networks_sync fallo (NM tiene sus propios perfiles)"
+    fi
+
+    # ------------------------------------------------------------------
+    # Paso 9: fallback.state ya no aplica.
+    # ------------------------------------------------------------------
     rm -f "${FALLBACK_STATE}"
+
+    ok "NetworkManager activo -- backbone restaurado"
+}
+
+# _fallback_off_rollback <reason> -- restaura iwd cuando fallback_off
+# falla a mitad. El nodo queda en el estado previo (iwd al mando).
+_fallback_off_rollback() {
+    local reason="$1"
+    err "fallback_off rollback: ${reason}"
+
+    info "restaurando iwd..."
+    systemctl unmask iwd 2>/dev/null || true
+    systemctl enable iwd 2>/dev/null || true
+    systemctl start iwd 2>/dev/null || true
+
+    if ! systemctl is-active iwd >/dev/null 2>&1; then
+        err "iwd NO arranco -- nodo sin red, revisar manualmente"
+        err "  sudo journalctl -u iwd -n 40"
+        err "  sudo journalctl -u NetworkManager -n 40"
+        return 1
+    fi
+    ok "iwd restaurado (gestor anterior)"
+
+    info "parando NetworkManager (rollback)..."
+    systemctl stop NetworkManager 2>/dev/null || true
+    systemctl disable NetworkManager 2>/dev/null || true
+
+    err "fallback_off fallo. Estado actual: iwd al mando."
+    err "Diagnostico: journalctl -u NetworkManager -n 40"
+    return 1
 }

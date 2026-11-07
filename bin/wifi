@@ -1015,6 +1015,29 @@ _cmd_fallback() {
 # ---------------------------------------------------------------------------
 # version / help
 # ---------------------------------------------------------------------------
+_cmd_ssh() {
+    _maybe_help ssh "$@"
+
+    local sub="${1:-status}"
+    shift || true
+
+    _load ssh
+    case "${sub}" in
+        harden)  require_root; ssh_harden ;;
+        revert)  require_root; ssh_revert ;;
+        status|"") ssh_status ;;
+        *) _die "uso: wifi ssh <harden|status|revert>" ;;
+    esac
+}
+
+_cmd_clean() {
+    _maybe_help clean "$@"
+
+    _load clean
+    require_root
+    wifi_clean
+}
+
 _cmd_version() {
     echo "wifi-setup 2.0 (NetworkManager backbone)"
 }
@@ -1118,6 +1141,8 @@ case "${CMD}" in
     lan)             _cmd_lan "$@" ;;
     vpn)             _cmd_vpn "$@" ;;
     fallback)        _cmd_fallback "$@" || exit $? ;;
+    ssh)             _cmd_ssh "$@" ;;
+    clean)           _cmd_clean "$@" ;;
     version|-v|--version) _cmd_version "$@" ;;
     help|-h|--help|"")    _cmd_help "$@" ;;
     *)
