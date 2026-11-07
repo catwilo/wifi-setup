@@ -30,7 +30,7 @@ setup() { setup_env; }
     # que 'wifi' quede disponible para diagnosticar.
     local ln_line unit_line
     ln_line=$(grep -n 'ln -sfn.*/usr/local/bin/wifi' "$REPO/install.sh" | head -1 | cut -d: -f1)
-    unit_line=$(grep -n 'wifi-boot-fallback.service' "$REPO/install.sh" | head -1 | cut -d: -f1)
+    unit_line=$(grep -n '^_wifi_boot_unit=' "$REPO/install.sh" | head -1 | cut -d: -f1)
     [ -n "$ln_line" ]
     [ -n "$unit_line" ]
     [ "$ln_line" -lt "$unit_line" ]

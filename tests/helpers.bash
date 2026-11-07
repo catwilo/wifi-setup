@@ -31,3 +31,7 @@ setup_env() {
     export WIFI="$REPO/bin/wifi"
     export USB_CONF="$REPO/config/usb-names.conf"
 }
+
+_skip_if_no_sudo() {
+    sudo -n true 2>/dev/null || skip "sudo not cached (run: sudo -v)"
+}

@@ -39,6 +39,7 @@ setup() {
 }
 
 @test "nm_usb_names_apply: escribe .link correcto e idempotente" {
+    _skip_if_no_sudo
     local cfg="$BATS_TEST_TMPDIR/usb-names.conf"
     printf '90:de:80:e7:fd:9f wlx1\n' > "$cfg"
 
@@ -61,6 +62,7 @@ setup() {
 }
 
 @test "nm_usb_names_apply: multiples mappings, ignora invalidas sin abortar" {
+    _skip_if_no_sudo
     local cfg="$BATS_TEST_TMPDIR/usb-names.conf"
     {
         printf '# comentario\n'
@@ -89,6 +91,7 @@ setup() {
 }
 
 @test "nm_usb_names_apply: funciona con IFS=\$'\\\\n\\\\t' (como install.sh)" {
+    _skip_if_no_sudo
     local cfg="$BATS_TEST_TMPDIR/usb-names.conf"
     printf '90:de:80:e7:fd:9f wlx1\n' > "$cfg"
     (
