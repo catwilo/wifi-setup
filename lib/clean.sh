@@ -54,17 +54,27 @@ wifi_clean() {
     _wpa_pids="$(pgrep -x wpa_supplicant 2>/dev/null || true)"
     _dpc_pids="$(pgrep -x dhcpcd 2>/dev/null || true)"
 
-    if [[ -n "${_wpa_pids}" ]]; then
-        # Si NM esta activo, dejar que NM lo re-spawnee si lo necesita.
-        # Matarlo aqui es seguro: NM lo relanza por D-Bus en segundos.
-        pkill -TERM -x wpa_supplicant 2>/dev/null || true
-        sleep 1
-        pkill -KILL -x wpa_supplicant 2>/dev/null || true
-        _clean_report "wpa_supplicant: matado (pids: $(echo ${_wpa_pids} | tr ' ' ','))"
-        _removed=$((_removed + 1))
-    else
-        _clean_report "wpa_supplicant: no corriendo"
+    if [[ "${_active_mgr}" == "NetworkManager" ]]; then
+        # NM spawnea su propio wpa_supplicant (hijo o via D-Bus). Matarlo
+        # hace que NM lo respawnee y la conexion flapee 1-2s. No es
+        # huerfano: es parte del stack de NM. No se toca.
+        if [[ -n "${_wpa_pids}" ]]; then
+            _clean_report "wpa_supplicant: corriendo bajo NM (no se toca, pids: $(echo ${_wpa_pids} | tr ' ' ','))"
+        else
+            _clean_report "wpa_supplicant: no corriendo"
+        fi
         _kept=$((_kept + 1))
+    else
+        if [[ -n "${_wpa_pids}" ]]; then
+            pkill -TERM -x wpa_supplicant 2>/dev/null || true
+            sleep 1
+            pkill -KILL -x wpa_supplicant 2>/dev/null || true
+            _clean_report "wpa_supplicant: matado (pids: $(echo ${_wpa_pids} | tr ' ' ','))"
+            _removed=$((_removed + 1))
+        else
+            _clean_report "wpa_supplicant: no corriendo"
+            _kept=$((_kept + 1))
+        fi
     fi
 
     if [[ -n "${_dpc_pids}" ]]; then
@@ -87,22 +97,35 @@ wifi_clean() {
     # ------------------------------------------------------------------
     _clean_section "2. Servicios systemd"
 
-    if systemctl is-enabled wpa_supplicant >/dev/null 2>&1; then
-        systemctl disable wpa_supplicant 2>/dev/null || true
-        _clean_report "wpa_supplicant.service: disable"
-        _removed=$((_removed + 1))
-    else
-        _clean_report "wpa_supplicant.service: ya disabled"
+    if [[ "${_active_mgr}" == "NetworkManager" ]]; then
+        # NM puede usar el servicio systemd (en algunas configs de Debian)
+        # o su propio supplicant por D-Bus. En ambos casos es de NM, no
+        # huerfano. No se toca.
+        _clean_report "wpa_supplicant.service: gestionado por NM (no se toca)"
         _kept=$((_kept + 1))
-    fi
-    if systemctl is-active wpa_supplicant >/dev/null 2>&1; then
-        systemctl stop wpa_supplicant 2>/dev/null || true
-        _clean_report "wpa_supplicant.service: stop"
+    else
+        if systemctl is-enabled wpa_supplicant >/dev/null 2>&1; then
+            systemctl disable wpa_supplicant 2>/dev/null || true
+            _clean_report "wpa_supplicant.service: disable"
+            _removed=$((_removed + 1))
+        else
+            _clean_report "wpa_supplicant.service: ya disabled"
+            _kept=$((_kept + 1))
+        fi
+        if systemctl is-active wpa_supplicant >/dev/null 2>&1; then
+            systemctl stop wpa_supplicant 2>/dev/null || true
+            _clean_report "wpa_supplicant.service: stop"
+        fi
     fi
 
     local _wpa_inst
     while IFS= read -r _wpa_inst; do
         [[ -n "${_wpa_inst}" ]] || continue
+        if [[ "${_active_mgr}" == "NetworkManager" ]]; then
+            _clean_report "${_wpa_inst}: corriendo bajo NM (no se toca)"
+            _kept=$((_kept + 1))
+            continue
+        fi
         systemctl stop "${_wpa_inst}" 2>/dev/null || true
         systemctl disable "${_wpa_inst}" 2>/dev/null || true
         systemctl reset-failed "${_wpa_inst}" 2>/dev/null || true

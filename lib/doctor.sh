@@ -51,9 +51,19 @@ _doctor_check_services() {
     while IFS=: read -r svc want_active want_enabled; do
         state_active="$(systemctl is-active  "${svc}" 2>/dev/null || true)"
         state_enabled="$(systemctl is-enabled "${svc}" 2>/dev/null || true)"
-        line="${svc} -- active=${state_active:-?} enabled=${state_enabled:-?}"
+        # Normalizar: "not-found" (unit inexistente en systemd) equivale
+        # funcionalmente a "disabled" -- no arranca en boot y no se puede
+        # habilitar hasta que el paquete instale la unit. Se compara como
+        # disabled, se muestra como "disabled (not-found)" para claridad.
+        local _cmp_enabled="${state_enabled}"
+        local _display_enabled="${state_enabled}"
+        if [[ "${state_enabled}" == "not-found" ]]; then
+            _cmp_enabled="disabled"
+            _display_enabled="disabled (not-found)"
+        fi
+        line="${svc} -- active=${state_active:-?} enabled=${_display_enabled:-?}"
 
-        if [[ "${state_active}" == "${want_active}" && "${state_enabled}" == "${want_enabled}" ]]; then
+        if [[ "${state_active}" == "${want_active}" && "${_cmp_enabled}" == "${want_enabled}" ]]; then
             _doctor_ok "${line}"
             continue
         fi
@@ -329,8 +339,25 @@ _doctor_check_usb_links() {
         IFS=' ' read -r mac name _rest <<< "${line}"
         [[ -n "${mac}" && -n "${name}" && -z "${_rest}" ]] || continue
 
+        # Solo importa el .link si el adaptador con esta MAC esta
+        # presente AHORA en el kernel. Sin adaptador, el .link se escribe
+        # cuando el usuario lo conecte (via: wifi usb-names apply). No es
+        # un problema del sistema, no merece WARN.
+        local _adapter_present=0 _ni _if_addr
+        for _ni in /sys/class/net/*/; do
+            _if_addr="$(cat "${_ni}/address" 2>/dev/null || true)"
+            if [[ "${_if_addr,,}" == "${mac,,}" ]]; then
+                _adapter_present=1
+                break
+            fi
+        done
+
         link="/etc/systemd/network/10-wifi-setup-${name}.link"
         if [[ ! -f "${link}" ]]; then
+            if [[ "${_adapter_present}" -eq 0 ]]; then
+                _doctor_skip "${mac} -> ${name} (adapter no conectado, .link no requerido)"
+                continue
+            fi
             _doctor_warn "falta ${link}"
             pending=1
             if [[ "${DOCTOR_FIX_MODE}" -eq 1 ]]; then
