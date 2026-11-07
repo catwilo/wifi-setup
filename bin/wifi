@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # bin/wifi -- wifi-setup CLI (NetworkManager backbone).
 #
-# RESPONSABILIDAD UNICA: dispatch de subcomandos. Cada _cmd_* valida
+# RESPONSABILIDAD UNICA: dispatch de subcomandos. Cada _cmd_* parsea
 # argumentos minimos, sourcea el lib correspondiente y llama la funcion.
 # La logica real vive en lib/*.sh.
 #
@@ -12,15 +12,7 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-# --log[=<path>] duplica stdout+stderr al archivo indicado, sin censurar
-# nada: la salida sigue yendo al terminal (tee).
-#   wifi --log fallback off         -> ${TMPDIR:-/tmp}/wifi-<ts>.log
-#   wifi --log=/tmp/w.log <cmd>     -> ruta explicita
-# WIFI_LOG_FILE=<path> en el entorno tambien vale (util bajo sudo, donde
-# argv cambia): sudo WIFI_LOG_FILE=/tmp/w.log wifi fallback off
-#
-# La ruta default usa ${TMPDIR:-/tmp}, que funciona en Termux (Android
-# sin root) y en Debian por igual. El archivo se abre con -a (append).
+# --log[=<path>] duplica stdout+stderr al archivo indicado (tee).
 _log_requested=0
 case "${1:-}" in
     --log)    _log_requested=1; shift ;;
@@ -31,17 +23,13 @@ if [[ "${_log_requested}" -eq 1 && -z "${WIFI_LOG_FILE:-}" ]]; then
 fi
 unset _log_requested
 if [[ -n "${WIFI_LOG_FILE:-}" ]]; then
-    # Crear con permisos legibles (644) de forma explicita: sin esto, el
-    # archivo hereda el umask del shell y en algunos entornos queda 600,
-    # ilegible desde otra sesion sin root. Log de debug -> legible.
     : > "${WIFI_LOG_FILE}" 2>/dev/null || true
     chmod 644 "${WIFI_LOG_FILE}" 2>/dev/null || true
     exec > >(tee -a "${WIFI_LOG_FILE}") 2>&1
     printf '[INFO]  log: %s\n' "${WIFI_LOG_FILE}" >&2
 fi
 
-# Resolver el symlink: /usr/local/bin/wifi apunta al repo. Sin esto,
-# _SELF_DIR seria /usr/local/bin y LIB_DIR /usr/local/lib (no existe).
+# Resolver el symlink: /usr/local/bin/wifi apunta al repo.
 _SELF="${BASH_SOURCE[0]}"
 if _real="$(readlink -f "${_SELF}" 2>/dev/null)" && [[ -n "${_real}" ]]; then
     _SELF="${_real}"
@@ -56,8 +44,6 @@ else
 fi
 _SELF_DIR="$(cd "$(dirname "${_SELF}")" && pwd)"
 
-# $'...' (ANSI-C quoting): produce el byte ESC real. Con comillas simples
-# '\033' el trap ERR imprimiria los caracteres literales, no el color.
 if [[ -t 1 ]]; then
     _R=$'\033[0;31m'; _X=$'\033[0m'
 else
@@ -66,9 +52,6 @@ fi
 
 _die() { echo -e "${_R}error: $*${_X}" >&2; exit 1; }
 
-# Trap ERR: si bash muere por set -e, imprime linea + comando + rc antes
-# de salir. Sin esto, un fallo interno (por ejemplo un nmcli con rc != 0
-# dentro de $(...)) mata el script en silencio y el usuario no ve nada.
 _on_err() {
     local _rc="$1" _line="$2" _cmd="$3"
     printf '%s[ERR]%s   line %s: rc=%s: %s\n' \
@@ -83,9 +66,6 @@ SCRIPTS_DIR="${PROJECT_ROOT}"
 [[ -f "${LIB_DIR}/common.sh" ]] \
     || _die "lib/common.sh no encontrado en ${LIB_DIR}"
 
-# ---------------------------------------------------------------------------
-# _load <lib...> -- sourcea common.sh + libs pedidos.
-# ---------------------------------------------------------------------------
 _load() {
     # shellcheck source=/dev/null
     source "${LIB_DIR}/common.sh"
@@ -96,9 +76,6 @@ _load() {
     done
 }
 
-# ---------------------------------------------------------------------------
-# _load_help -- sourcea common.sh + help.sh (solo cuando se pide ayuda).
-# ---------------------------------------------------------------------------
 _load_help() {
     # shellcheck source=/dev/null
     source "${LIB_DIR}/common.sh"
@@ -106,11 +83,6 @@ _load_help() {
     source "${LIB_DIR}/help.sh"
 }
 
-# ---------------------------------------------------------------------------
-# _maybe_help <topic> [args...] -- si el primer arg es -h/--help, imprime
-# la ayuda del topic y sale 0. El topic normaliza '-' a '_' para que
-# "usb-names" resuelva a "help_usb_names".
-# ---------------------------------------------------------------------------
 _maybe_help() {
     local topic="${1//-/_}"; shift
     if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
@@ -125,142 +97,33 @@ _maybe_help() {
     fi
 }
 
-# ---------------------------------------------------------------------------
-# status
-# ---------------------------------------------------------------------------
+# --- dispatch de subcomandos ------------------------------------------
+# Cada _cmd_*: _maybe_help + parseo de flags + _load + require_root + llamada.
+
 _cmd_status() {
     _maybe_help status "$@"
-
-    _load nm radio
-    _radio_load_state
-    # status es lectura: funciona con NM o con iwd (fallback), sin root.
-
-    section "Gestor WiFi"
-    local _mgr="ninguno"
-    if systemctl is-active NetworkManager >/dev/null 2>&1; then
-        _mgr="NetworkManager"
-        ok "NetworkManager activo (backbone)"
-    elif systemctl is-active iwd >/dev/null 2>&1; then
-        _mgr="iwd"
-        ok "iwd activo (fallback)"
-    else
-        warn "sin gestor WiFi activo (NM e iwd parados)"
-    fi
-
-    section "Interfaces"
-    ip -br addr 2>/dev/null || warn "ip no disponible"
-
-    section "Ruta default"
-    local _routes
-    _routes="$(ip route show default 2>/dev/null || true)"
-    if [ -n "$_routes" ]; then
-        printf '%s\n' "$_routes"
-    else
-        warn "sin ruta default (posible corte de red)"
-    fi
-
-    section "Antenas WiFi (red conectada por antena)"
-    local _p _if _found=0
-    printf '  %-10s %-10s %-10s %-24s %s\n' "IFACE" "ROL" "ESTADO" "RED" "IP" >&2
-    for _p in /sys/class/net/*/wireless; do
-        [ -d "$_p" ] || continue
-        _found=1
-        _if="${_p%/wireless}"; _if="${_if##*/}"
-        local _state _net _ip _rol
-        _rol=""
-        [[ "${_if}" == "${RADIO_PRIMARY:-}"   ]] && _rol="primary"
-        [[ "${_if}" == "${RADIO_SECONDARY:-}" ]] && _rol="secondary"
-        _state="$(cat "/sys/class/net/${_if}/operstate" 2>/dev/null || echo "?")"
-        _ip="$(ip -4 -o addr show "${_if}" 2>/dev/null | awk '{print $4}' | head -1)"
-
-        # Red conectada segun el gestor activo. nmcli dev status devuelve
-        # el NOMBRE DEL PERFIL (wifi-wlan0-SSID); hay que resolver el SSID
-        # real leyendo 802-11-wireless.ssid del perfil. iwd ya devuelve
-        # el SSID directamente.
-        _net=""
-        if [ "${_mgr}" = "NetworkManager" ]; then
-            local _prof
-            _prof="$(nmcli -t -f DEVICE,CONNECTION dev status 2>/dev/null \
-                | awk -F: -v i="${_if}" '$1==i {print $2; exit}')"
-            if [ -n "${_prof}" ]; then
-                local _ssid
-                _ssid="$(nmcli -t -g 802-11-wireless.ssid con show "${_prof}" 2>/dev/null | head -1 || true)"
-                _net="${_ssid:-${_prof}}"
-            fi
-        elif [ "${_mgr}" = "iwd" ]; then
-            _net="$(iwctl station "${_if}" show 2>/dev/null \
-                | awk -F'  +' '/Connected network/ {print $3; exit}')"
-        fi
-        printf '  %-10s %-10s %-10s %-24s %s\n' \
-            "${_if}" "${_rol}" "${_state}" "${_net:--}" "${_ip:--}" >&2
-    done
-    [ "${_found}" -eq 1 ] || warn "no se detectaron antenas WiFi en el kernel"
-
-    if [ "${_mgr}" = "NetworkManager" ]; then
-        section "Perfiles NM"
-        local _total=0 _auto=0 _noauto=0
-        local _name _autoflag
-        while IFS= read -r _name; do
-            [ -n "${_name}" ] || continue
-            _total=$((_total + 1))
-            _autoflag="$(nmcli -t -g connection.autoconnect con show "${_name}" 2>/dev/null || true)"
-            if [ "${_autoflag}" = "yes" ]; then
-                _auto=$((_auto + 1))
-            else
-                _noauto=$((_noauto + 1))
-            fi
-        done < <(nmcli -t -f NAME,TYPE con show 2>/dev/null | awk -F: '$2=="802-11-wireless"{print $1}')
-        printf '  total:              %d
-' "${_total}"
-        printf '  autoconectadas:     %d
-' "${_auto}"
-        printf '  NO autoconectadas:  %d
-' "${_noauto}"
-    fi
-
-    section "Internet"
-    if ping -c1 -W2 1.1.1.1 >/dev/null 2>&1; then
-        ok "OK (ping 1.1.1.1)"
-    else
-        warn "sin conectividad a 1.1.1.1"
-    fi
+    _load nm radio status
+    status_run
 }
 
-# ---------------------------------------------------------------------------
-# ifaces -- inventario fisico completo de antenas WiFi.
-# Muestra lo que el kernel ve + lo que NM ve, mas adaptadores USB
-# presentes en el bus que no cargaron driver.
-# ---------------------------------------------------------------------------
 _cmd_interfaces() {
     _maybe_help interfaces "$@"
-
     _load nm radio
-    # Solo lectura: no requiere root.
-
     section "Antenas WiFi (kernel + NM)"
     radio_ifaces_list || true
-
     echo ""
 }
 
-# ---------------------------------------------------------------------------
-# radio <list|primary|secondary|use|clear-session|up|down>
-# ---------------------------------------------------------------------------
 _cmd_radio() {
     _maybe_help radio "$@"
-
-    local sub="${1:-}"
-    shift || true
+    local sub="${1:-}"; shift || true
     [[ -n "${sub}" ]] || _die "uso: wifi radio <list|primary|secondary|use|clear-session|up|down> [args]"
-
     _load nm radio networks
     require_root
-
     case "${sub}" in
-        boot)           radio_boot ;;
+        boot) radio_boot ;;
         session)
-            local ssub="${1:-}"
-            shift || true
+            local ssub="${1:-}"; shift || true
             case "${ssub}" in
                 clear) radio_clear_session ;;
                 *) _die "uso: wifi radio session <clear>" ;;
@@ -269,30 +132,20 @@ _cmd_radio() {
         *)
             nm_require
             case "${sub}" in
-                list)          radio_list ;;
-                primary)       radio_set_primary   "${1:-}" ;;
-                secondary)     radio_set_secondary "${1:-}" ;;
-                use)           radio_use           "$@" ;;
-                up)            radio_up   "$@" ;;
-                down)          radio_down "$@" ;;
+                list)      radio_list ;;
+                primary)   radio_set_primary   "${1:-}" ;;
+                secondary) radio_set_secondary "${1:-}" ;;
+                use)       radio_use           "$@" ;;
+                up)        radio_up            "$@" ;;
+                down)      radio_down          "$@" ;;
                 *) _die "subcomando desconocido: ${sub}" ;;
             esac
             ;;
     esac
 }
 
-# ---------------------------------------------------------------------------
-# add <ssid> [--iface X] [--pass P] -- crear perfil WiFi.
-# ---------------------------------------------------------------------------
 _cmd_add() {
     _maybe_help add "$@"
-
-    # add NO exige NM: con NM parado, la red se guarda en la DB + iwd
-    # y se conectara cuando NM arranque. Solo el paso "conectar" al
-    # final requiere NM (y ahi se chequea con systemctl).
-    _load nm radio
-    require_root
-
     local ssid="" iface="" pass=""
     while [[ "$#" -gt 0 ]]; do
         case "$1" in
@@ -307,113 +160,23 @@ _cmd_add() {
                 echo "Sin --pass pide la PSK interactivo (min 8 caracteres)."
                 exit 0 ;;
             *)
-                if [[ -z "${ssid}" ]]; then
-                    ssid="$1"
-                else
-                    _die "argumento inesperado: $1"
-                fi
-                shift
-                ;;
+                if [[ -z "${ssid}" ]]; then ssid="$1"
+                else _die "argumento inesperado: $1"; fi
+                shift ;;
         esac
     done
-
-    if [[ -z "${ssid}" ]]; then
-        ssid="$(_add_pick_ssid || true)"
-    fi
+    _load nm radio networks profiles
+    require_root
+    [[ -n "${ssid}" ]] || ssid="$(profile_pick_ssid || true)"
     [[ -n "${ssid}" ]] || _die "uso: wifi add [<ssid>] [--iface X] [--pass P]"
-
-    # SSID con espacios al inicio/fin: el nombre del perfil NM los
-    # incluye y genera duplicados con nombres casi identicos (ver:
-    # "Familia_Mora" vs "Familia_Mora "). Advertir y pedir confirmacion
-    # antes de crear basura.
-    if [[ "${ssid}" =~ ^[[:space:]] || "${ssid}" =~ [[:space:]]$ ]]; then
-        warn "el SSID tiene espacios al inicio o al final: '${ssid}'"
-        warn "esto crea un perfil con espacios en el nombre (dificil de distinguir)"
-        read -r -p "continuar igual? [s/N]: " _ans
-        [[ "${_ans}" =~ ^[sS]$ ]] || _die "cancelado"
-    fi
-
-    if [[ -z "${iface}" ]]; then
-        _radio_load_state
-        iface="${RADIO_PRIMARY:-$(radio_ifaces | head -1)}"
-        [[ -n "${iface}" ]] || _die "no hay antenas WiFi -- verifica hardware"
-    fi
-    radio_is_iface "${iface}" || _die "'${iface}' no es WiFi"
-
-    if [[ -z "${pass}" ]]; then
-        IFS= read -r -s -p "PSK para '${ssid}' (min 8): " pass
-        echo
-    fi
-    [[ "${#pass}" -ge 8 ]] || _die "PSK minimo 8 caracteres"
-
-    # autoconnect=yes siempre. El valor definitivo lo fija el rol via
-    # radio_apply_autoconnect (SECONDARY -> no). Aca no se decide por
-    # antena: la DB se guarda con yes y el rol lo ajusta despues.
-    local auto="yes"
-
-    # 1) DB primero: la DB es la fuente de verdad.
-    _networks_store_upsert "${ssid}" "${pass}" "${iface}" "${auto}" "0"
-
-    # 2) Propagar a los backends. networks_apply hace sync en NM (si
-    #    corre) e iwd (siempre escribe el .psk). Idempotente.
-    _load networks
-    networks_apply
-
-    ok "red '${ssid}' agregada en ${iface} (DB + NM + iwd, autoconnect=${auto})"
-
-    # 3) Si NM corre, intentar conectar y reportar. Si no, la red queda
-    #    guardada para cuando lo arranques.
-    if systemctl is-active NetworkManager >/dev/null 2>&1; then
-        local profile="wifi-${iface}-${ssid}"
-        info "intentando conectar a '${ssid}'..."
-        local up_rc=0
-        nm_con_up "${profile}" || up_rc=$?
-        if [[ "${up_rc}" -eq 0 ]]; then
-            ok "conectado a '${ssid}' via ${iface}"
-        else
-            err "no se pudo conectar a '${ssid}' (rc=${up_rc})"
-            err "causas comunes: red fuera de rango, PSK incorrecta, driver con problema"
-            err "revisa: wifi doctor | wifi showpass '${profile}'"
-        fi
-    else
-        info "NM no activo -- red guardada en la DB (usala cuando arranques NM)"
-    fi
+    profile_add "${ssid}" "${iface}" "${pass}"
 }
 
-# _add_pick_ssid -- picker fzf sobre el ultimo escaneo guardado.
-# Imprime el SSID elegido; vacio si fzf o la cache no estan disponibles
-# (en ese caso el caller cae al prompt textual normal).
-_add_pick_ssid() {
-    local cache="${STATE_DIR}/last-scan.txt"
-    command -v fzf >/dev/null 2>&1 || return 0
-    if [[ ! -s "${cache}" ]]; then
-        warn "no hay escaneo previo -- corre 'wifi scan' para el picker fzf"
-        return 0
-    fi
-    fzf --prompt='SSID> ' --height=40% < "${cache}"
-}
-
-# ---------------------------------------------------------------------------
-# networks <list|merge|sync>
-#   list   tabla unificada del store + presencia del perfil NM
-#   merge  funde perfiles NM actuales al store (aditivo, nunca borra)
-#   sync   regenera perfiles NM desde el store (idempotente)
-# ---------------------------------------------------------------------------
 _cmd_networks() {
     _maybe_help networks "$@"
-
-    local sub="${1:-list}"
-    shift || true
-
+    local sub="${1:-list}"; shift || true
     _load nm radio networks
-
-    # La DB (networks.tsv) contiene PSKs en claro y vive con permisos
-    # 600 root:root. Todos los subcomandos -- incluidos list y show --
-    # requieren root para leerla con seguridad. Intentar sin root
-    # produciria "store vacio" enganoso (el archivo existe pero no es
-    # legible).
     require_root
-
     case "${sub}" in
         list|"") nm_require; networks_list "$@" ;;
         show)    nm_require; networks_show "${1:-}" ;;
@@ -432,488 +195,187 @@ _cmd_networks() {
     esac
 }
 
-# ---------------------------------------------------------------------------
-# switch <ssid> [--iface X] -- cambiar a un perfil WiFi guardado.
-# ---------------------------------------------------------------------------
 _cmd_connect() {
     _maybe_help connect "$@"
-
     _load nm radio
     nm_require
     require_root
-
     local ssid="${1:-}" iface="${2:-}"
     [[ -n "${ssid}" ]] || _die "uso: wifi connect <ssid> [iface]"
-
     if [[ -z "${iface}" ]]; then
         _radio_load_state
         iface="${RADIO_PRIMARY:-$(radio_ifaces | head -1)}"
     fi
-
     local profile="wifi-${iface}-${ssid}"
     nm_con_exists "${profile}" \
         || _die "perfil '${profile}' no existe -- usa: wifi add ${ssid} --iface ${iface}"
-
-    info "conectando ${iface} (NM elige entre las visibles)..."
+    info "conectando ${iface}..."
     local up_rc=0
     nm_device_connect "${iface}" || up_rc=$?
     if [[ "${up_rc}" -eq 0 ]]; then
         ok "conectado via ${iface}"
     else
         err "no se pudo conectar via ${iface} (rc=${up_rc})"
-        err "revisa: wifi status | wifi doctor"
     fi
 }
 
-# ---------------------------------------------------------------------------
-# passwd <profile> -- cambiar PSK de un perfil.
-# ---------------------------------------------------------------------------
-_cmd_password_set() {
+_cmd_password() {
     _maybe_help password "$@"
+    local sub="${1:-}"; shift || true
+    _load nm networks profiles
+    require_root
+    case "${sub}" in
+        set)
+            nm_require
+            local target="" pass=""
+            while [[ "$#" -gt 0 ]]; do
+                case "$1" in
+                    --pass) pass="${2:-}"; shift 2 ;;
+                    -h|--help)
+                        echo "uso: wifi password set <profile|ssid> [--pass P]"
+                        exit 0 ;;
+                    *)
+                        if [[ -z "${target}" ]]; then target="$1"
+                        else _die "argumento inesperado: $1"; fi
+                        shift ;;
+                esac
+            done
+            [[ -n "${target}" ]] || _die "uso: wifi password set <profile|ssid> [--pass P]"
+            profile_password_set "${target}" "${pass}"
+            ;;
+        show)
+            local target="${1:-}"
+            [[ -n "${target}" ]] || _die "uso: wifi password show <perfil|ssid>"
+            profile_password_show "${target}"
+            ;;
+        *) _die "uso: wifi password <set|show> [args]" ;;
+    esac
+}
 
+_cmd_priority() {
+    _maybe_help priority "$@"
+    local sub="${1:-}"; shift || true
+    case "${sub}" in
+        set)
+            _load nm networks profiles
+            nm_require; require_root
+            local target="${1:-}" prio="${2:-}"
+            [[ -n "${target}" && -n "${prio}" ]] || _die "uso: wifi priority set <perfil|ssid> <N>"
+            profile_priority_set "${target}" "${prio}"
+            ;;
+        *) _die "uso: wifi priority set <perfil|ssid> <N>" ;;
+    esac
+}
+
+_cmd_autoconnect() {
+    _maybe_help autoconnect "$@"
+    local sub="${1:-}"; shift || true
+    case "${sub}" in
+        set)
+            _load nm networks profiles
+            nm_require; require_root
+            local profile="${1:-}" mode="${2:-}"
+            [[ -n "${profile}" && -n "${mode}" ]] || _die "uso: wifi autoconnect set <perfil> <on|off>"
+            profile_autoconnect_set "${profile}" "${mode}"
+            ;;
+        *) _die "uso: wifi autoconnect set <perfil> <on|off>" ;;
+    esac
+}
+
+_cmd_mac() {
+    _maybe_help mac "$@"
+    local sub="${1:-}"; shift || true
     _load nm
     nm_require
     require_root
-
-    local target="" pass=""
-    while [[ "$#" -gt 0 ]]; do
-        case "$1" in
-            --pass) pass="${2:-}"; shift 2 ;;
-            -h|--help)
-                echo "uso: wifi password set <profile|ssid> [--pass P]"
-                echo ""
-                echo "Cambia la PSK del perfil y reconecta."
-                echo "Acepta el nombre del perfil ('wifi-<iface>-<ssid>') o el SSID."
-                echo "Sin --pass pide la PSK interactivo (min 8 caracteres)."
-                exit 0 ;;
-            *)
-                if [[ -z "${target}" ]]; then
-                    target="$1"
-                else
-                    _die "argumento inesperado: $1"
-                fi
-                shift
-                ;;
-        esac
-    done
-    [[ -n "${target}" ]] || _die "uso: wifi password set <profile|ssid> [--pass P]"
-
-    local profile
-    profile="$(_passwd_resolve_profile "${target}")" \
-        || _die "no hay perfil para '${target}' -- usa: wifi networks"
-
-    if [[ -z "${pass}" ]]; then
-        IFS= read -r -s -p "nuevo PSK para '${profile}' (min 8): " pass
-        echo
-    fi
-    [[ "${#pass}" -ge 8 ]] || _die "minimo 8 caracteres"
-
-    # Actualizar la PSK en la DB (fuente de verdad) y propagar a los
-    # dos backends. La DB guarda PSK por SSID; actualizamos todas las
-    # filas de ese SSID.
-    local ssid _line _s _p _i _a _pr _ts
-    ssid="$(nmcli -t -g 802-11-wireless.ssid con show "${profile}" 2>/dev/null | head -1 || true)"
-    [[ -n "${ssid}" ]] || ssid="${target}"
-    _load networks
-
-    # upsert con la PSK nueva, preservando iface/auto/prio existentes.
-    local tmp; tmp="$(mktemp "${TMPDIR:-/tmp}/wifi-tsv.XXXXXX")"
-    _networks_store_init
-    grep '^#' "${NETWORKS_STORE}" > "${tmp}" || true
-    local updated=0
-    while IFS= read -r _line; do
-        IFS=$'\t' read -r _s _p _i _a _pr _ts <<< "${_line}"
-        if [[ "${_s}" == "${ssid}" ]]; then
-            printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
-                "${_s}" "${pass}" "${_i}" "${_a}" "${_pr}" "$(date +%s)" >> "${tmp}"
-            updated=$((updated + 1))
-        else
-            printf '%s\n' "${_line}" >> "${tmp}"
-        fi
-    done < <(_networks_store_rows)
-    if [[ "${updated}" -eq 0 ]]; then
-        printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
-            "${ssid}" "${pass}" "${profile#wifi-}" "yes" "0" "$(date +%s)" >> "${tmp}"
-    fi
-    mv "${tmp}" "${NETWORKS_STORE}"
-    chmod 600 "${NETWORKS_STORE}"
-    info "PSK de '${ssid}' actualizada en la DB (${updated} fila(s))"
-
-    # Propagar a backends.
-    networks_apply
-
-    ok "PSK actualizada en DB + NM + iwd"
-
-    if systemctl is-active NetworkManager >/dev/null 2>&1; then
-        info "reconectando '${profile}'..."
-        local up_rc=0
-        nm_con_up "${profile}" || up_rc=$?
-        if [[ "${up_rc}" -eq 0 ]]; then
-            ok "reconectado con la nueva PSK"
-        else
-            err "PSK actualizada, pero no reconecto (rc=${up_rc})"
-            err "revisa: wifi doctor"
-        fi
-    fi
+    case "${sub}" in
+        set)
+            local profile="${1:-}" mac="${2:-}"
+            [[ -n "${profile}" && -n "${mac}" ]] || _die "uso: wifi mac set <profile> <mac|random|stable|permanent>"
+            nm_con_exists "${profile}" || _die "perfil '${profile}' no existe"
+            case "$(nm_con_get "${profile}" connection.type)" in
+                802-11-wireless) nm_con_set_mac_wifi "${profile}" "${mac}" ;;
+                802-3-ethernet)  nm_con_set_mac      "${profile}" "${mac}" ;;
+                *) _die "tipo de perfil no soportado" ;;
+            esac
+            ok "MAC de '${profile}' -> ${mac}"
+            ;;
+        show)
+            local profile="${1:-}"
+            [[ -n "${profile}" ]] || _die "uso: wifi mac show <profile>"
+            local type mac
+            type="$(nm_con_get "${profile}" connection.type)"
+            case "${type}" in
+                802-11-wireless) mac="$(nm_con_get "${profile}" 802-11-wireless.cloned-mac-address)" ;;
+                802-3-ethernet)  mac="$(nm_con_get "${profile}" 802-3-ethernet.cloned-mac-address)"  ;;
+            esac
+            echo "perfil : ${profile}"
+            echo "cloned-mac-address : ${mac:-permanent}"
+            ;;
+        *) _die "uso: wifi mac <set|show> [args]" ;;
+    esac
 }
 
-# _passwd_resolve_profile <profile|ssid> -- imprime el nombre de perfil.
-# Si el argumento es un perfil existente, lo usa tal cual. Si no, lo
-# busca como SSID en todos los perfiles WiFi conocidos por NM.
-_passwd_resolve_profile() {
-    local arg="$1" name ssid
-    if nm_con_exists "${arg}"; then
-        printf '%s\n' "${arg}"
-        return 0
-    fi
-    while IFS= read -r name; do
-        [[ -n "${name}" ]] || continue
-        ssid="$(nmcli -t -g 802-11-wireless.ssid con show "${name}" 2>/dev/null || true)"
-        if [[ "${ssid}" == "${arg}" ]]; then
-            printf '%s\n' "${name}"
-            return 0
-        fi
-    done < <(nmcli -t -f NAME,TYPE con show 2>/dev/null \
-        | awk -F: '$2=="802-11-wireless"{print $1}')
-    return 1
-}
-
-# ---------------------------------------------------------------------------
-# showpass <profile> -- PSK en claro del perfil.
-# ---------------------------------------------------------------------------
-_cmd_password_show() {
-    _maybe_help password "$@"
-
-    _load nm networks
-    require_root
-
-    local target="${1:-}"
-    [[ -n "${target}" ]] || _die "uso: wifi password show <perfil|ssid>"
-
-    # 1) Si es un perfil NM existente, leer de ahi (fuente autoritativa
-    #    cuando NM esta corriendo).
-    if systemctl is-active NetworkManager >/dev/null 2>&1 && nm_con_exists "${target}" 2>/dev/null; then
-        local psk
-        psk="$(nmcli -s -g 802-11-wireless-security.psk con show "${target}" 2>/dev/null | head -1 || true)"
-        if [[ -n "${psk}" ]]; then
-            echo "perfil : ${target}"
-            echo "fuente : NM"
-            echo "psk    : ${psk}"
-            return 0
-        fi
-    fi
-
-    # 2) Si es un SSID en la DB, leer de ahi (funciona sin NM).
-    local db_psk
-    db_psk="$(_networks_psk_for_ssid "${target}" || true)"
-    if [[ -n "${db_psk}" ]]; then
-        echo "ssid   : ${target}"
-        echo "fuente : DB"
-        echo "psk    : ${db_psk}"
-        return 0
-    fi
-
-    # 3) Si es un SSID con .psk en iwd, leer de ahi.
-    if [[ -r "${IWD_DIR}/${target}.psk" ]]; then
-        local iwd_psk
-        iwd_psk="$(_iwd_psk_for_ssid "${target}" || true)"
-        if [[ -n "${iwd_psk}" ]]; then
-            echo "ssid   : ${target}"
-            echo "fuente : iwd"
-            echo "psk    : ${iwd_psk}"
-            return 0
-        fi
-    fi
-
-    _die "no encontrado: '${target}' (ni como perfil NM, ni en la DB, ni en iwd)"
-}
-
-# ---------------------------------------------------------------------------
-# rename <perfil-actual> <perfil-nuevo> -- renombra un perfil guardado.
-# Cambia solo el nombre; UUID, PSK, MAC y prioridad se preservan.
-# ---------------------------------------------------------------------------
-_cmd_profile_rename() {
+_cmd_profile() {
     _maybe_help profile "$@"
-
-    _load nm networks
-    nm_require
-    require_root
-
-    local old="${1:-}" new="${2:-}"
-    [[ -n "${old}" && -n "${new}" ]] || _die "uso: wifi profile rename <perfil-actual> <perfil-nuevo>"
-
-    nm_con_exists "${old}" || _die "perfil '${old}' no existe"
-
-    if nm_con_exists "${new}"; then
-        _die "ya existe un perfil llamado '${new}'"
-    fi
-
-    # La DB indexa por (ssid, iface); el nombre del perfil NM es derivado
-    # (wifi-<iface>-<ssid>). Renombrar el perfil a algo distinto del
-    # patron hace que 'wifi networks sync' lo RECREE con el nombre viejo
-    # (el que la DB espera) la proxima vez. Advertir fuerte antes de
-    # permitir el cambio.
-    local _iface _ssid
-    _iface="$(nm_con_get "${old}" connection.interface-name 2>/dev/null | head -1 || true)"
-    _ssid="$(nmcli -t -g 802-11-wireless.ssid con show "${old}" 2>/dev/null | head -1 || true)"
-    if [[ -n "${_iface}" && -n "${_ssid}" ]]; then
-        local expected="wifi-${_iface}-${_ssid}"
-        if [[ "${new}" != "${expected}" ]]; then
-            warn "renombrar a '${new}' rompe el patron wifi-<iface>-<ssid>'"
-            warn "el proximo 'wifi networks sync' puede recrear '${expected}'"
-            read -r -p "continuar de todos modos? [s/N]: " _ans
-            [[ "${_ans}" =~ ^[sS]$ ]] || _die "cancelado"
-        fi
-    fi
-
-    nmcli con mod "${old}" connection.id "${new}" >/dev/null
-    ok "perfil renombrado: ${old} -> ${new}"
-    info "la DB (indexada por ssid) no cambia"
+    local sub="${1:-}"; shift || true
+    case "${sub}" in
+        rename)
+            _load nm networks profiles
+            nm_require; require_root
+            local old="${1:-}" new="${2:-}"
+            [[ -n "${old}" && -n "${new}" ]] || _die "uso: wifi profile rename <perfil-actual> <perfil-nuevo>"
+            profile_rename "${old}" "${new}"
+            ;;
+        *) _die "uso: wifi profile rename <perfil-actual> <perfil-nuevo>" ;;
+    esac
 }
 
-# ---------------------------------------------------------------------------
-# setpriority <perfil|ssid> <N> -- cambia la prioridad de autoconnect.
-# Mayor N = preferido. Persistente.
-# ---------------------------------------------------------------------------
-_cmd_priority_set() {
-    _maybe_help priority "$@"
-
-    _load nm networks
-    nm_require
-    require_root
-
-    local target="${1:-}" prio="${2:-}"
-    [[ -n "${target}" && -n "${prio}" ]] || _die "uso: wifi priority set <perfil|ssid> <N>"
-    [[ "${prio}" =~ ^[0-9]+$ ]] || _die "prioridad debe ser un numero entero (0..999)"
-
-    local profile
-    profile="$(_passwd_resolve_profile "${target}")" \
-        || _die "no hay perfil para '${target}'"
-
-    nm_con_set_priority "${profile}" "${prio}"
-    ok "prioridad de '${profile}' = ${prio}"
-
-    # Actualizar la DB (todas las filas del SSID, si el perfil tiene SSID).
-    local ssid
-    ssid="$(nmcli -t -g 802-11-wireless.ssid con show "${profile}" 2>/dev/null | head -1 || true)"
-    if [[ -n "${ssid}" && -f "${NETWORKS_STORE}" ]]; then
-        local tmp; tmp="$(mktemp "${TMPDIR:-/tmp}/wifi-tsv.XXXXXX")"
-        grep '^#' "${NETWORKS_STORE}" > "${tmp}" || true
-        while IFS= read -r _line; do
-            local _s _p _i _a _pr _ts
-            IFS=$'\t' read -r _s _p _i _a _pr _ts <<< "${_line}"
-            if [[ "${_s}" == "${ssid}" ]]; then
-                printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
-                    "${_s}" "${_p}" "${_i}" "${_a}" "${prio}" "$(date +%s)" >> "${tmp}"
-            else
-                printf '%s\n' "${_line}" >> "${tmp}"
-            fi
-        done < <(_networks_store_rows)
-        mv "${tmp}" "${NETWORKS_STORE}"
-        chmod 600 "${NETWORKS_STORE}"
-        info "DB actualizada (SSID '${ssid}')"
-    fi
-}
-
-# ---------------------------------------------------------------------------
-# delete <perfil|ssid> -- borra un perfil guardado y su fila en la DB.
-# ---------------------------------------------------------------------------
 _cmd_delete() {
     _maybe_help delete "$@"
-
-    _load nm networks
+    _load nm networks profiles
     nm_require
     require_root
-
     local target="${1:-}"
     [[ -n "${target}" ]] || _die "uso: wifi delete <perfil|ssid>"
-
-    local profile
-    profile="$(_passwd_resolve_profile "${target}")" \
-        || _die "no hay perfil para '${target}' -- usa: wifi networks"
-
-    local ssid
-    ssid="$(nmcli -t -g 802-11-wireless.ssid con show "${profile}" 2>/dev/null | head -1 || true)"
-
-    nm_con_delete "${profile}"
-    ok "perfil borrado: ${profile}"
-
-    if [[ -n "${ssid}" ]]; then
-        _networks_store_delete "${ssid}"
-        info "DB: filas del SSID '${ssid}' eliminadas"
-    fi
+    profile_delete "${target}"
 }
 
-# ---------------------------------------------------------------------------
-# setmac <profile> <mac|random|stable|permanent>
-# ---------------------------------------------------------------------------
-_cmd_mac_set() {
-    _maybe_help mac "$@"
-
-    _load nm
-    nm_require
-    require_root
-
-    local profile="${1:-}" mac="${2:-}"
-    [[ -n "${profile}" && -n "${mac}" ]] || _die "uso: wifi mac set <profile> <mac|random|stable|permanent>"
-
-    nm_con_exists "${profile}" || _die "perfil '${profile}' no existe"
-
-    case "$(nm_con_get "${profile}" connection.type)" in
-        802-11-wireless) nm_con_set_mac_wifi "${profile}" "${mac}" ;;
-        802-3-ethernet)  nm_con_set_mac      "${profile}" "${mac}" ;;
-        *) _die "tipo de perfil no soportado" ;;
-    esac
-    ok "MAC de '${profile}' -> ${mac}"
-}
-
-# ---------------------------------------------------------------------------
-# showmac <profile>
-# ---------------------------------------------------------------------------
-_cmd_mac_show() {
-    _maybe_help mac "$@"
-
-    _load nm
-    nm_require
-    require_root
-
-    local profile="${1:-}"
-    [[ -n "${profile}" ]] || _die "uso: wifi mac show <profile>"
-
-    local type mac
-    type="$(nm_con_get "${profile}" connection.type)"
-    case "${type}" in
-        802-11-wireless) mac="$(nm_con_get "${profile}" 802-11-wireless.cloned-mac-address)" ;;
-        802-3-ethernet)  mac="$(nm_con_get "${profile}" 802-3-ethernet.cloned-mac-address)"  ;;
-    esac
-    echo "perfil : ${profile}"
-    echo "cloned-mac-address : ${mac:-permanent}"
-}
-
-# ---------------------------------------------------------------------------
-# autoconnect <profile> <on|off>
-# ---------------------------------------------------------------------------
-_cmd_autoconnect_set() {
-    _maybe_help autoconnect "$@"
-
-    _load nm networks
-    nm_require
-    require_root
-
-    local profile="${1:-}" mode="${2:-}"
-    [[ -n "${profile}" && -n "${mode}" ]] || _die "uso: wifi autoconnect set <profile> <on|off>"
-    nm_con_exists "${profile}" || _die "perfil '${profile}' no existe"
-
-    # Normalizar al vocabulario de la DB (yes/no).
-    local db_mode
-    case "${mode}" in
-        on|yes)   db_mode="yes" ;;
-        off|no)   db_mode="no" ;;
-        *) _die "modo invalido: '${mode}' (on|off)" ;;
-    esac
-    nm_con_set_autoconnect "${profile}" "${db_mode}"
-
-    # Actualizar la DB para que sync no revierta el cambio.
-    local ssid iface _line _s _p _i _a _pr _ts
-    ssid="$(nmcli -t -g 802-11-wireless.ssid con show "${profile}" 2>/dev/null | head -1 || true)"
-    iface="$(nm_con_get "${profile}" connection.interface-name 2>/dev/null | head -1 || true)"
-    if [[ -n "${ssid}" && -n "${iface}" && -f "${NETWORKS_STORE}" ]]; then
-        local tmp; tmp="$(mktemp "${TMPDIR:-/tmp}/wifi-tsv.XXXXXX")"
-        grep '^#' "${NETWORKS_STORE}" > "${tmp}" || true
-        while IFS= read -r _line; do
-            IFS=$'\t' read -r _s _p _i _a _pr _ts <<< "${_line}"
-            if [[ "${_s}" == "${ssid}" && "${_i}" == "${iface}" ]]; then
-                printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
-                    "${_s}" "${_p}" "${_i}" "${db_mode}" "${_pr}" "$(date +%s)" >> "${tmp}"
-            else
-                printf '%s\n' "${_line}" >> "${tmp}"
-            fi
-        done < <(_networks_store_rows)
-        mv "${tmp}" "${NETWORKS_STORE}"
-        chmod 600 "${NETWORKS_STORE}"
-    fi
-    ok "${profile} autoconnect=${db_mode} (NM + DB)"
-}
-
-# ---------------------------------------------------------------------------
-# panic -- recuperacion de emergencia.
-# ---------------------------------------------------------------------------
 _cmd_panic() {
     _maybe_help panic "$@"
-
-    _load nm
-    nm_require
-    require_root
-
-    warn "PANIC: reiniciando NetworkManager..."
-    systemctl restart NetworkManager
-    sleep 3
-
-    local iface
-    while IFS= read -r iface; do
-        [[ -n "${iface}" ]] || continue
-        info "reconectando ${iface}..."
-        nmcli dev connect "${iface}" 2>/dev/null || true
-    done < <(radio_ifaces)
-
-    ok "recuperacion completa"
-    nm_dev_list
+    _load nm radio panic
+    panic_run
 }
 
-# ---------------------------------------------------------------------------
-# monitor <on|off|status> [iface]
-# Cambia una antena entre managed y monitor, sin tocar las demas.
-# ---------------------------------------------------------------------------
 _cmd_monitor() {
     _maybe_help monitor "$@"
-
-    local sub="${1:-}"
-    shift || true
-
+    local sub="${1:-}"; shift || true
     _load nm radio monitor
     nm_require
     require_root
-
     case "${sub}" in
-        on)     monitor_on     "${1:-}" ;;
-        off)    monitor_off    "${1:-}" ;;
-        status|"") monitor_status ;;
+        on)         monitor_on     "${1:-}" ;;
+        off)        monitor_off    "${1:-}" ;;
+        status|"")  monitor_status ;;
         *) _die "uso: wifi monitor <on|off|status> [iface]" ;;
     esac
 }
 
-# ---------------------------------------------------------------------------
-# doctor [--fix]
-# Diagnostico del stack. Sin flags, solo reporta. Con --fix, corrige
-# los problemas conocidos de forma segura (no destructivo).
-# ---------------------------------------------------------------------------
 _cmd_doctor() {
     _maybe_help doctor "$@"
-
     _load nm radio doctor
-
-    # Sin --fix es solo lectura: no requiere root. Con --fix necesita
-    # root porque escribe .link, renombra perfiles NM y toca systemd.
     if [[ "${1:-}" == "--fix" ]]; then
         require_root
     fi
-
     doctor_run "$@"
 }
 
-# ---------------------------------------------------------------------------
-# lan <setup|up|down|status|remove>
-# ---------------------------------------------------------------------------
 _cmd_lan() {
     _maybe_help lan "$@"
-
-    local sub="${1:-}"
-    shift || true
-
+    local sub="${1:-}"; shift || true
     _load nm lan
     nm_require
     require_root
-
     case "${sub}" in
         setup)  lan_setup "$@" ;;
         up)     lan_up ;;
@@ -925,34 +387,22 @@ _cmd_lan() {
     esac
 }
 
-# ---------------------------------------------------------------------------
-# usb-names <status|apply|edit>
-# Gestiona el mapeo MAC -> nombre de iface USB WiFi.
-# Fuente: config/usb-names.conf en BASE_DIR (si install corrio) o en el repo.
-# ---------------------------------------------------------------------------
 _cmd_usb() {
     _maybe_help usb "$@"
-
-    local sub="${1:-}"
-    shift || true
-
+    local sub="${1:-}"; shift || true
     _load nm
     require_root
-
     local cfg="${CONFIG_DIR}/usb-names.conf"
     [[ -f "${cfg}" ]] || cfg="${LIB_DIR}/../config/usb-names.conf"
-
     case "${sub}" in
         status|"")
             echo "usb-names.conf: ${cfg}"
             echo ""
             nm_usb_names_status "${cfg}"
             ;;
-        apply)
-            nm_usb_names_apply "${cfg}"
-            ;;
+        apply)  nm_usb_names_apply "${cfg}" ;;
         edit)
-            [[ -f "${cfg}" ]] || { _die "no existe ${cfg} -- corre: sudo bash ${SCRIPTS_DIR}/install.sh primero"; }
+            [[ -f "${cfg}" ]] || _die "no existe ${cfg} -- corre: sudo bash ${SCRIPTS_DIR}/install.sh primero"
             "${EDITOR:-vi}" "${cfg}"
             info "re-aplica con: wifi usb-names apply"
             ;;
@@ -960,15 +410,9 @@ _cmd_usb() {
     esac
 }
 
-# ---------------------------------------------------------------------------
-# vpn <install|up|down|status>
-# ---------------------------------------------------------------------------
 _cmd_vpn() {
     _maybe_help vpn "$@"
-
-    local sub="${1:-}"
-    shift || true
-
+    local sub="${1:-}"; shift || true
     _load vpn
     case "${sub}" in
         up)      require_root; vpn_up "$@" ;;
@@ -979,9 +423,6 @@ _cmd_vpn() {
     esac
 }
 
-# ---------------------------------------------------------------------------
-# scan [--iface X] -- escaneo de redes WiFi visibles.
-# ---------------------------------------------------------------------------
 _cmd_scan() {
     _maybe_help scan "$@"
     _load nm radio scan
@@ -990,19 +431,9 @@ _cmd_scan() {
     scan_run "$@"
 }
 
-# ---------------------------------------------------------------------------
-# fallback <on|off|status> -- alterna entre NM (backbone) e iwd (fallback).
-# ---------------------------------------------------------------------------
 _cmd_fallback() {
     _maybe_help fallback "$@"
-
-    local sub="${1:-status}"
-    shift || true
-
-    # fallback_off usa networks_import_from_iwd + networks_sync (viven en
-    # networks.sh) y esas funciones usan nmcli wrappers (nm.sh). Cargar
-    # ambos modulos aunque 'on'/'status' no los necesiten -- el costo es
-    # despreciable y evita "command not found".
+    local sub="${1:-status}"; shift || true
     _load nm radio networks fallback
     case "${sub}" in
         on)        require_root; fallback_on ;;
@@ -1012,15 +443,9 @@ _cmd_fallback() {
     esac
 }
 
-# ---------------------------------------------------------------------------
-# version / help
-# ---------------------------------------------------------------------------
 _cmd_ssh() {
     _maybe_help ssh "$@"
-
-    local sub="${1:-status}"
-    shift || true
-
+    local sub="${1:-status}"; shift || true
     _load ssh
     case "${sub}" in
         harden)  require_root; ssh_harden ;;
@@ -1032,7 +457,6 @@ _cmd_ssh() {
 
 _cmd_clean() {
     _maybe_help clean "$@"
-
     _load clean
     require_root
     wifi_clean
@@ -1047,86 +471,17 @@ _cmd_help() {
     help_index
 }
 
-# ---------------------------------------------------------------------------
-# password <set|show>
-# ---------------------------------------------------------------------------
-_cmd_password() {
-    _maybe_help password "$@"
-    local sub="${1:-}"
-    shift || true
-    case "${sub}" in
-        set)  _cmd_password_set "$@" ;;
-        show) _cmd_password_show "$@" ;;
-        *) _die "uso: wifi password <set|show> [args]" ;;
-    esac
-}
-
-# ---------------------------------------------------------------------------
-# priority <set>
-# ---------------------------------------------------------------------------
-_cmd_priority() {
-    _maybe_help priority "$@"
-    local sub="${1:-}"
-    shift || true
-    case "${sub}" in
-        set) _cmd_priority_set "$@" ;;
-        *) _die "uso: wifi priority set <perfil|ssid> <N>" ;;
-    esac
-}
-
-# ---------------------------------------------------------------------------
-# autoconnect <set>
-# ---------------------------------------------------------------------------
-_cmd_autoconnect() {
-    _maybe_help autoconnect "$@"
-    local sub="${1:-}"
-    shift || true
-    case "${sub}" in
-        set) _cmd_autoconnect_set "$@" ;;
-        *) _die "uso: wifi autoconnect set <perfil> <on|off>" ;;
-    esac
-}
-
-# ---------------------------------------------------------------------------
-# mac <set|show>
-# ---------------------------------------------------------------------------
-_cmd_mac() {
-    _maybe_help mac "$@"
-    local sub="${1:-}"
-    shift || true
-    case "${sub}" in
-        set)  _cmd_mac_set "$@" ;;
-        show) _cmd_mac_show "$@" ;;
-        *) _die "uso: wifi mac <set|show> [args]" ;;
-    esac
-}
-
-# ---------------------------------------------------------------------------
-# profile <rename>
-# ---------------------------------------------------------------------------
-_cmd_profile() {
-    _maybe_help profile "$@"
-    local sub="${1:-}"
-    shift || true
-    case "${sub}" in
-        rename) _cmd_profile_rename "$@" ;;
-        *) _die "uso: wifi profile rename <perfil-actual> <perfil-nuevo>" ;;
-    esac
-}
-
-# ---------------------------------------------------------------------------
-# Dispatch
-# ---------------------------------------------------------------------------
+# --- dispatch ----------------------------------------------------------
 CMD="${1:-help}"
 shift || true
 
 case "${CMD}" in
     status)          _cmd_status "$@" ;;
     interfaces)      _cmd_interfaces "$@" ;;
-    radio)           _cmd_radio "$@" || exit $? ;;
-    scan)            _cmd_scan "$@" || exit $? ;;
+    radio)           _cmd_radio "$@" ;;
+    scan)            _cmd_scan "$@" ;;
     add)             _cmd_add "$@" ;;
-    networks)        _cmd_networks "$@" || exit $? ;;
+    networks)        _cmd_networks "$@" ;;
     connect)         _cmd_connect "$@" ;;
     password)        _cmd_password "$@" ;;
     priority)        _cmd_priority "$@" ;;
@@ -1137,10 +492,10 @@ case "${CMD}" in
     usb)             _cmd_usb "$@" ;;
     panic)           _cmd_panic "$@" ;;
     monitor)         _cmd_monitor "$@" ;;
-    doctor)          _cmd_doctor "$@" || exit $? ;;
+    doctor)          _cmd_doctor "$@" ;;
     lan)             _cmd_lan "$@" ;;
     vpn)             _cmd_vpn "$@" ;;
-    fallback)        _cmd_fallback "$@" || exit $? ;;
+    fallback)        _cmd_fallback "$@" ;;
     ssh)             _cmd_ssh "$@" ;;
     clean)           _cmd_clean "$@" ;;
     version|-v|--version) _cmd_version "$@" ;;

@@ -59,7 +59,7 @@ wifi_clean() {
         # hace que NM lo respawnee y la conexion flapee 1-2s. No es
         # huerfano: es parte del stack de NM. No se toca.
         if [[ -n "${_wpa_pids}" ]]; then
-            _clean_report "wpa_supplicant: corriendo bajo NM (no se toca, pids: $(echo ${_wpa_pids} | tr ' ' ','))"
+            _clean_report "wpa_supplicant: corriendo bajo NM (no se toca, pids: $(echo "${_wpa_pids}" | tr ' ' ,))"
         else
             _clean_report "wpa_supplicant: no corriendo"
         fi
@@ -69,7 +69,7 @@ wifi_clean() {
             pkill -TERM -x wpa_supplicant 2>/dev/null || true
             sleep 1
             pkill -KILL -x wpa_supplicant 2>/dev/null || true
-            _clean_report "wpa_supplicant: matado (pids: $(echo ${_wpa_pids} | tr ' ' ','))"
+            _clean_report "wpa_supplicant: matado (pids: $(echo "${_wpa_pids}" | tr ' ' ,))"
             _removed=$((_removed + 1))
         else
             _clean_report "wpa_supplicant: no corriendo"
@@ -81,7 +81,7 @@ wifi_clean() {
         pkill -TERM -x dhcpcd 2>/dev/null || true
         sleep 1
         pkill -KILL -x dhcpcd 2>/dev/null || true
-        _clean_report "dhcpcd: matado (pids: $(echo ${_dpc_pids} | tr ' ' ','))"
+        _clean_report "dhcpcd: matado (pids: $(echo "${_dpc_pids}" | tr ' ' ,))"
         _removed=$((_removed + 1))
     else
         _clean_report "dhcpcd: no corriendo"

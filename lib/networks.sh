@@ -668,3 +668,35 @@ networks_cleanup() {
     chmod 600 "${NETWORKS_STORE}"
     ok "DB podada: ${dropped} eliminadas, ${kept} conservadas"
 }
+
+# _networks_store_update_field <ssid> [<iface>] <field> <value>
+# Actualiza UN campo de las filas que matchean. iface vacio o "*" matchea
+# todas las filas del SSID. field en {psk,autoconnect,priority}.
+# rc=0: al menos una fila actualizada. rc=1: ninguna fila matcheo.
+_networks_store_update_field() {
+    local ssid="$1" iface="${2:-*}" field="$3" value="$4"
+    [[ -f "${NETWORKS_STORE}" ]] || return 1
+    local col
+    case "${field}" in
+        psk)         col=2 ;;
+        autoconnect) col=4 ;;
+        priority)    col=5 ;;
+        *) die "campo desconocido: ${field}" ;;
+    esac
+    local ts; ts="$(date +%s)"
+    local tmp; tmp="$(mktemp "${TMPDIR:-/tmp}/wifi-tsv.XXXXXX")"
+    local rc=0
+    awk -F'\t' -v s="${ssid}" -v i="${iface}" -v c="${col}" -v v="${value}" -v u="${ts}" '
+        BEGIN { OFS="\t"; n=0 }
+        /^#/ { print; next }
+        NF < 3 { print; next }
+        {
+            if ($1==s && (i=="*" || $3==i)) { $c=v; $6=u; n++ }
+            print
+        }
+        END { exit (n==0 ? 1 : 0) }
+    ' "${NETWORKS_STORE}" > "${tmp}" || rc=$?
+    mv "${tmp}" "${NETWORKS_STORE}"
+    chmod 600 "${NETWORKS_STORE}"
+    return "${rc}"
+}

@@ -161,12 +161,12 @@ _check() {
         _fail=$((_fail + 1))
     fi
 }
-[[ -x /usr/local/bin/wifi ]] && _check "symlink /usr/local/bin/wifi" 1 || _check "symlink /usr/local/bin/wifi" 0
-[[ -f "${STATE_DIR}/install.state" ]] && _check "install.state" 1 || _check "install.state" 0
-command -v nmcli >/dev/null 2>&1 && _check "nmcli instalado" 1 || _check "nmcli instalado" 0
-command -v iwctl >/dev/null 2>&1 && _check "iwctl instalado" 1 || _check "iwctl instalado" 0
-[[ -f "${_wifi_boot_unit}" ]] && _check "wifi-boot-fallback.service" 1 || _check "wifi-boot-fallback.service" 0
-/usr/local/bin/wifi -h >/dev/null 2>&1 && _check "wifi -h responde" 1 || _check "wifi -h responde" 0
+if [[ -x /usr/local/bin/wifi ]]; then _check "symlink /usr/local/bin/wifi" 1; else _check "symlink /usr/local/bin/wifi" 0; fi
+if [[ -f "${STATE_DIR}/install.state" ]]; then _check "install.state" 1; else _check "install.state" 0; fi
+if command -v nmcli >/dev/null 2>&1; then _check "nmcli instalado" 1; else _check "nmcli instalado" 0; fi
+if command -v iwctl >/dev/null 2>&1; then _check "iwctl instalado" 1; else _check "iwctl instalado" 0; fi
+if [[ -f "${_wifi_boot_unit}" ]]; then _check "wifi-boot-fallback.service" 1; else _check "wifi-boot-fallback.service" 0; fi
+if /usr/local/bin/wifi -h >/dev/null 2>&1; then _check "wifi -h responde" 1; else _check "wifi -h responde" 0; fi
 
 if [[ "${_fail}" -gt 0 ]]; then
     err "instalacion termino con ${_fail} fallo(s)"
