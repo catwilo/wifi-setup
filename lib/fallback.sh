@@ -43,23 +43,26 @@ _fallback_ensure_iwd_netconf() {
     mkdir -p /etc/iwd
     tmp="$(mktemp "${conf}.XXXXXX")"
 
-    # Reescribe main.conf COMPLETO de forma atomica. Motivo: 'fallback on'
-    # dos veces seguidas dejaba dos secciones [General] (la primera vacia);
-    # iwd lee solo la primera y descarta la segunda, perdiendo
-    # EnableNetworkConfiguration -> DHCP integrado apagado -> usuario
-    # forzado a dhcpcd manual.
-    #
-    # Algoritmo: parsear bloques [Seccion]; eliminar toda clave gestionada
-    # (donde este); eliminar secciones gestionadas que queden vacias;
-    # agregar el bloque canonico UNA vez al final; escribir atomico.
+    # Reescribe main.conf mergeando las claves canonicas en la PRIMERA
+    # ocurrencia de cada seccion. El algoritmo anterior las anadia al
+    # final del archivo, produciendo dos [General] (la primera vacia);
+    # iwd lee solo la primera y descarta la segunda -> DHCP off -> sin IP
+    # tras fallback on. Nuevo algoritmo: nunca duplica una seccion; si
+    # no existe, la crea al final; si existe, inserta las claves dentro.
+    # DefaultInterface=?* se elimina siempre: es sintaxis invalida para
+    # iwd y rompe el bind en algunos drivers.
     python3 - "${conf}" "${tmp}" <<'PY_IWD_CONF'
 import os, sys
 
 src, dst = sys.argv[1], sys.argv[2]
-MANAGED = {"EnableNetworkConfiguration", "NameResolvingService", "DefaultInterface"}
-SECTIONS = {"General", "Network", "DriverQuirks"}
 
-blocks = []
+CANONICAL = {
+    "General": [("EnableNetworkConfiguration", "true")],
+    "Network": [("NameResolvingService", "systemd")],
+}
+MANAGED_KEYS = {"EnableNetworkConfiguration", "NameResolvingService", "DefaultInterface"}
+
+sections = []
 cur_name, cur_lines = None, []
 if os.path.exists(src):
     with open(src, "r", encoding="utf-8", errors="replace") as f:
@@ -68,30 +71,47 @@ if os.path.exists(src):
             s = line.strip()
             if s.startswith("[") and s.endswith("]"):
                 if cur_name is not None or cur_lines:
-                    blocks.append((cur_name, cur_lines))
+                    sections.append((cur_name, cur_lines))
                 cur_name, cur_lines = s[1:-1].strip(), []
             else:
                 cur_lines.append(line)
     if cur_name is not None or cur_lines:
-        blocks.append((cur_name, cur_lines))
+        sections.append((cur_name, cur_lines))
 
-kept = []
-for name, lines in blocks:
-    if name in SECTIONS:
-        lines = [
-            l for l in lines
-            if l.strip() and l.strip().split("=", 1)[0].strip() not in MANAGED
-        ]
-        if not any(l.strip() for l in lines):
+cleaned = []
+for name, lines in sections:
+    out = []
+    for l in lines:
+        s = l.strip()
+        if not s or s.startswith("#"):
+            out.append(l)
             continue
-    kept.append((name, lines))
+        key = s.split("=", 1)[0].strip()
+        if key in MANAGED_KEYS:
+            continue
+        out.append(l)
+    cleaned.append((name, out))
 
-kept.append(("General", ["EnableNetworkConfiguration=true"]))
-kept.append(("Network", ["NameResolvingService=systemd"]))
-kept.append(("DriverQuirks", ["DefaultInterface=?*"]))
+def find_first(name):
+    for i, (n, _) in enumerate(cleaned):
+        if n == name:
+            return i
+    return -1
+
+for sec_name, kvs in CANONICAL.items():
+    idx = find_first(sec_name)
+    if idx == -1:
+        cleaned.append((sec_name, [f"{k}={v}" for k, v in kvs]))
+    else:
+        n, lines = cleaned[idx]
+        for k, v in kvs:
+            lines.append(f"{k}={v}")
+        cleaned[idx] = (n, lines)
 
 with open(dst, "w", encoding="utf-8") as f:
-    for name, lines in kept:
+    for name, lines in cleaned:
+        if not any(l.strip() for l in lines):
+            continue
         if name is not None:
             f.write("[%s]\n" % name)
         for l in lines:
@@ -268,7 +288,11 @@ fallback_on() {
         ok "ya estas en fallback (iwd activo, NM parado)"
         info "reincidiendo iwd para aplicar cualquier cambio de config..."
         systemctl restart iwd 2>/dev/null || true
-        _fallback_wait_ip 30 || true
+        if ! _fallback_wait_ip 45; then
+            err "iwd no obtuvo IP en 45s (ya estaba en fallback)"
+            info "no se toca NM -- estado actual preservado"
+            return 1
+        fi
         _fallback_fix_routes || true
         return 0
     fi
@@ -302,7 +326,12 @@ fallback_on() {
     fi
     ok "iwd activo -- es el gestor WiFi ahora"
 
-    _fallback_wait_ip 30 || true
+    if ! _fallback_wait_ip 45; then
+        err "iwd no obtuvo IP en 45s -- revirtiendo a NetworkManager"
+        warn "el nodo NO queda en fallback: NM restaurado con internet"
+        fallback_off || err "rollback tambien fallo -- intervencion manual"
+        return 1
+    fi
     _fallback_fix_routes || true
 
     info "conecta con: iwctl station <iface> connect <ssid>"
