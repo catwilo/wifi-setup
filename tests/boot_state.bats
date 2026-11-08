@@ -1,8 +1,16 @@
 #!/usr/bin/env bats
-# post_reboot.bats -- invariantes post-reboot. Tarea 226171.
-# Bats no puede reiniciar la maquina; el test valida el estado actual
-# (que es lo que un reboot debe respetar). Se skipea donde el repo no
-# aplica (no Debian) o sin el hardware relevante.
+# boot_state.bats -- invariantes que el estado tras un reboot DEBE respetar.
+# Tarea 226171.
+#
+# ALCANCE: este test corre en el estado ACTUAL de la maquina. Bats no
+# puede reiniciar el sistema, asi que la unica forma de usarlo como
+# "post-reboot" es correrlo MANUALMENTE despues de un reboot. El nombre
+# refleja eso: valida el invariante (wireless iface con IP, default
+# route, gateway alcanzable, DNS, sin wpa_supplicant huerfano cuando
+# iwd es gestor, driver wl para BCM4313/BCM4727).
+#
+# Se skipea donde el repo no aplica (no Debian) o sin el hardware
+# relevante, para no fallar en CI/Termux.
 #
 # Invariantes:
 #   - wireless iface con IP tras arranque
@@ -28,7 +36,7 @@ _gateway() {
     ip route show default 2>/dev/null | awk '/default/ {print $3; exit}'
 }
 
-@test "post_reboot: wireless iface con IP tras arranque" {
+@test "boot_state: wireless iface con IP tras arranque" {
     _require_debian
     local iface
     iface="$(_wireless_iface)"
@@ -39,7 +47,7 @@ _gateway() {
     echo "$output" | grep -qE 'inet (192\.|10\.|172\.)'
 }
 
-@test "post_reboot: default route via wireless iface" {
+@test "boot_state: default route via wireless iface" {
     _require_debian
     local iface
     iface="$(_wireless_iface)"
@@ -49,7 +57,7 @@ _gateway() {
     echo "$output" | grep -q "dev $iface"
 }
 
-@test "post_reboot: gateway alcanzable (0-5% loss)" {
+@test "boot_state: gateway alcanzable (0-5% loss)" {
     _require_debian
     local gw iface
     iface="$(_wireless_iface)"
@@ -63,7 +71,7 @@ _gateway() {
     [ "${loss:-100}" -le 5 ] || { echo "loss=${loss}% > 5%" >&3; return 1; }
 }
 
-@test "post_reboot: DNS resuelve" {
+@test "boot_state: DNS resuelve" {
     _require_debian
     command -v getent >/dev/null 2>&1 || skip "getent no disponible"
     run getent hosts debian.org
@@ -71,7 +79,7 @@ _gateway() {
     [ -n "$output" ]
 }
 
-@test "post_reboot: sin wpa_supplicant huerfano cuando iwd es el gestor" {
+@test "boot_state: sin wpa_supplicant huerfano cuando iwd es el gestor" {
     _require_debian
     systemctl is-active iwd >/dev/null 2>&1 || skip "iwd no activo"
     systemctl is-active NetworkManager >/dev/null 2>&1 && skip "NM es el gestor (wpa_supplicant puede ser legitimo)"
@@ -79,7 +87,7 @@ _gateway() {
     [ "$status" -ne 0 ] || { echo "wpa_supplicant corriendo con iwd como gestor" >&3; return 1; }
 }
 
-@test "post_reboot: driver correcto para Broadcom BCM4313/BCM4727" {
+@test "boot_state: driver correcto para Broadcom BCM4313/BCM4727" {
     _require_debian
     command -v lspci >/dev/null 2>&1 || skip "lspci no disponible"
     local chip_line

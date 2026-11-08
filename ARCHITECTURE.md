@@ -198,8 +198,9 @@ a -47 dBm, TX 65-72 Mbps. El chip se identifica como "Broadcom BCM4727
 802.11 Hybrid Wireless Controller 6.30.223.271" con wl, no como
 "BCM4313" con brcmsmac (lspci reportaba mal el modelo).
 
-Trade-off: broadcom-sta tiene CVEs locales (CVE-2019-9501/9502/9503),
-no remotos; requieren ejecucion previa en la maquina. Riesgo aceptable
+Trade-off: broadcom-sta tiene CVEs locales conocidos (consultar la base
+publica CVE del paquete), no remotos; requieren ejecucion previa en la
+maquina. Riesgo aceptable
 frente a 25% de perdida constante. wl no soporta WPA3; si el AP pasa
 a WPA3-only, la tarjeta no conecta y hay que evaluar bajar el AP a WPA2
 mixed o asumir el 25% de perdida con brcmsmac.
