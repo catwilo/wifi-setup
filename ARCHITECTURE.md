@@ -2,247 +2,217 @@
 
 ## Stack
 
-    NetworkManager         WiFi + ethernet + DHCP + NAT (backbone)
-    wpa_supplicant         backend WiFi de NM (por defecto)
-    iwd                    fallback con DHCP integrado (`wifi fallback on`)
-    Tailscale              VPN (instalado, apagado hasta `wifi vpn up`)
-    systemd-resolved       DNS stub (127.0.0.53); dueno de /etc/resolv.conf
+    NetworkManager      WiFi + DHCP + DNS (backbone)
+    iwd                 fallback con DHCP integrado (`wifi fallback on`)
+    systemd-resolved    DNS stub (127.0.0.53), dueno de /etc/resolv.conf
+    wl (broadcom-sta)   driver Broadcom, requerido en BCM4313/BCM4727
 
-En modo backbone no se usa dhcpcd ni systemd-networkd. En modo fallback
-(`wifi fallback on`) iwd hace DHCP por si mismo -- DHCP integrado via
-EnableNetworkConfiguration=true en /etc/iwd/main.conf.
-No se usa: dhcpcd, systemd-networkd, NetworkManager plugins externos.
+NM es el gestor por defecto. iwd solo via `wifi fallback on`.
+No se usa: dhcpcd, systemd-networkd, wpa_supplicant directo.
 
 ## Capas
 
-    bin/wifi            dispatcher CLI puro
-        -> install.sh | uninstall.sh | checks.sh
-        -> source lib/*.sh segun subcomando
-        -> source lib/help.sh cuando se pide -h
-        -> lib/*.sh llaman nmcli
+    bin/wifi            preamble (log, symlink, _load, _maybe_help) + dispatch
+        -> source lib/cli_commands.sh (los _cmd_*)
+        -> _cmd_* sourcea el lib del dominio y llama
+        -> lib/*.sh llama nmcli / iwctl / iw
 
-`bin/wifi` no ejecuta logica de negocio: cada `_cmd_*` valida args,
-sourcea el lib correspondiente, llama una funcion, imprime resultado.
-La ayuda vive en lib/help.sh (una funcion help_<sub> por subcomando);
-`_maybe_help <topic> "$@"` en cada `_cmd_*` intercepta `-h`/`--help`
-antes de tocar libs de negocio.
+`bin/wifi` no ejecuta logica de negocio: cada `_cmd_*` parsea args,
+sourcea el lib del dominio, llama una funcion, imprime resultado. La
+ayuda vive en `lib/help_*.sh`.
 
 ## Responsabilidades por archivo
 
 ### Raiz
 
-    bin/wifi            Dispatcher. Solo parse + dispatch. Sin logica real.
-    install.sh          Instalador. Instala stack, crea perfiles, no activa LAN/VPN.
-    uninstall.sh        Desinstalador. Revierte install sin tocar perfiles NM.
+    bin/wifi            Preamble + dispatch. Sin logica real.
+    install.sh          Instala stack, symlink, units. No activa red.
+    uninstall.sh        Revierte install sin tocar perfiles NM.
     checks.sh           Verificacion post-install (read-only).
-    README.md           Guia de uso (subcomandos, modelo, estado conocido).
-    .shellcheckrc       Disables justificados (SC1091 path dinamico, SC2034 globals).
+    README.md           Guia de uso.
+    ARCHITECTURE.md     Este documento.
 
 ### lib/
 
-    common.sh           Bootstrap obligatorio: set -Eeuo, dirs, colores,
-                        source log.sh, die/require_root/require_dirs,
-                        validate_interface, backup_file, sweep_legacy_install.
+    common.sh           Bootstrap: set -Eeuo, dirs, colores, die, require_root.
+    log.sh              ok/warn/err/info/section/step. stderr + archivo sin ANSI.
 
-    log.sh              Output: ok/warn/err/info/section/step. Todo a stderr
-                        + archivo sin ANSI.
+    nm.sh               Wrapper nmcli. Ningun otro modulo llama nmcli directo.
+    deps.sh             apt: NM + iwd + utilidades.
+    detect.sh           Deteccion no destructiva: SSH iface + IP local.
 
-    help.sh             Help modular. Paleta por categoria (STATE/RADIO/NET/
-                        MAC/USB/LAN/VPN/MONITOR/DIAG/EMERG) y una funcion
-                        help_<sub> por subcomando. Primero y unico lugar
-                        que define el texto de ayuda.
+    radio_state.sh      Estado de antenas: load/save/session + helpers de kernel.
+    radio_roles.sh      PRIMARY/SECONDARY/session, list, apply_autoconnect.
+    radio_ops.sh        up/down/boot + inventario fisico (ifaces_list).
 
-    detect.sh           Deteccion no destructiva: SSH iface + local IP.
+    networks_store.sh   TSV networks.tsv: init/rows/upsert/delete/update_field/psk.
+    networks_pull.sh    pull nm / pull iwd (fundir al store).
+    networks_apply.sh   Regenerar perfiles NM + escribir .psk iwd.
+    networks_show.sh    list/show/export/import/cleanup.
 
-    nm.sh               Wrapper fino sobre nmcli. Ningun otro modulo llama
-                        nmcli directo (salvo scan.sh, que usa
-                        `nmcli dev wifi list --rescan yes` porque no hay
-                        wrapper para escaneo). Si NM cambia su interfaz,
-                        se ajusta aqui.
+    profiles.sh         CRUD de perfiles: add, password, rename, priority,
+                        delete, autoconnect.
 
-    radio.sh            Antenas WiFi (nativa + USB). Roles primary/secondary
-                        (persistente) + override de sesion.
-
-    scan.sh             Escaneo de redes WiFi visibles. Solo lectura: dispara
-                        rescan (nmcli dev wifi list --rescan yes) y lista.
-                        No crea perfiles, no conecta, no toca estado.
-                        Los SSID se imprimen entre comillas dobles (--names
-                        y last-scan.txt) para hacer visibles los espacios al
-                        inicio/fin; _add_pick_ssid despoja las comillas al
-                        elegir.
-                        No crea perfiles, no conecta, no toca estado.
-
-    networks.sh         Store central y UNICO de redes WiFi. TSV con una
-                        fila por (ssid, iface). Fuente de verdad: add y
-                        password set escriben aqui primero, luego
-                        networks_apply propaga a NM (keyfile) e iwd
-                        (/var/lib/iwd/<ssid>.psk). pull nm / pull iwd
-                        alimentan la DB; export/import mueven la DB entre
-                        equipos; cleanup limpia filas huerfanas.
-
-    lan.sh              Cable ethernet. Perfiles NM (manual/shared/auto) con
-                        autoconnect=off. Activacion manual con `wifi lan up`.
-
-    vpn.sh              Tailscale: install + up/down/status + routes.
-                        install.sh deja el daemon activo sin conectar.
-
+    scan.sh             Escaneo read-only. SSID entre comillas (visibilidad).
+    fallback_state.sh   svc_snapshot, ensure_iwd_netconf, wait_ip, fix_routes.
+    fallback_ops.sh     fallback_on/off/status.
     ssh.sh              Hardening SSH con rollback si sshd -t falla.
+    status.sh           status_run: reporte completo del stack.
 
-    deps.sh             Instalacion apt: NetworkManager + iwd + utilidades.
+    help_index.sh       Help top-level (wifi help).
+    help_wifi.sh        Ayuda: status, scan, add, radio.
+    help_networks.sh    Ayuda: networks, connect, password, profile, priority,
+                        delete, mac, autoconnect.
+    help_system.sh      Ayuda: usb, fallback, ssh, clean, version.
+    help.sh             Hub: sourcea los 4 help_*.sh.
 
-    fallback.sh         Alterna entre NM (backbone) e iwd (fallback con DHCP
-                        integrado). fallback_on/off/status. Guarda el estado
-                        previo en fallback.state para restauracion exacta.
+    cli_commands.sh     Los _cmd_* (parseo de args + llamada al dominio).
 
 ## Flujo de `install.sh`
 
     require_root
-    -> relaunch en tmux 'wifi-setup' (supervivencia SSH)
-    -> limpieza previa (idempotente)
-    -> deteccion: SSH iface + antenas WiFi (USB=PRIMARY, nativa=SECONDARY)
-    -> install_deps (NM + iwd + utilities + systemd-resolved)
-    -> _deps_ensure_resolved (systemd-resolved enabled, symlink
-       /etc/resolv.conf -> /run/systemd/resolve/stub-resolv.conf)
-    -> si NM no esta activo (maquina venia en fallback): unmask + start
-    -> prompts SSID/PSK (solo si no hay perfiles previos)
+    -> relaunch en tmux (supervivencia SSH)
+    -> deteccion: SSH iface + antenas (USB=PRIMARY, nativa=SECONDARY)
+    -> install_deps (NM + iwd + utilidades + systemd-resolved)
+    -> _deps_ensure_resolved (systemd-resolved enabled, symlink resolv.conf)
+    -> si NM no esta activo: unmask + start
+    -> prompts SSID/PSK si no hay perfiles previos
     -> crear perfiles NM por antena + persistir roles
     -> radio_apply_autoconnect (PRIMARY=yes, SECONDARY=no)
     -> migracion stack: stop iwd/dhcpcd/networkd, start NM
     -> configure_ssh
-    -> vpn_install (daemon activo, sin conectar) + _vpn_disable_dns
-       (tailscale set --accept-dns=false; no reescribe resolv.conf)
-    -> _deps_ensure_resolved (repara el symlink si tailscaled lo piso)
     -> symlink /usr/local/bin/wifi -> repo/bin/wifi
     -> guardar install.state + checks.sh
 
-NO configura el cable LAN (eso es `wifi lan setup`).
-NO conecta Tailscale (eso es `wifi vpn up`).
+install.sh no activa red que no este ya configurada. No configura LAN,
+VPN ni tailscale -- esas areas no son parte del repo.
 
 ## Flujo de `wifi <cmd>` (runtime)
 
-    wifi status           NM + antenas + conexiones + LAN + VPN + internet
-    wifi interfaces       inventario fisico de antenas (kernel + NM)
-    wifi scan [--iface X] escaneo de redes visibles ahora
-    wifi radio *          antenas: list/primary/secondary/use/session/up/down/boot
+    wifi status           gestor + antenas + conexiones + internet
+    wifi scan [--iface X] escaneo de redes visibles
+    wifi radio *          list/primary/secondary/use/session/up/down/boot
     wifi add [<ssid>]     crear perfil + conectar (picker fzf sin <ssid>)
     wifi networks *       store: list/show/pull nm|iwd/export/import/cleanup
     wifi connect <ssid>   activar perfil guardado (nm_device_connect)
-    wifi profile rename   renombrar un perfil NM
-    wifi priority set     cambiar prioridad de autoconnect
-    wifi autoconnect set  override manual de autoconnect en un perfil
-    wifi delete           borrar un perfil + filas de la DB
-    wifi password show    ver PSK (DB -> NM -> iwd)
+    wifi profile rename   renombrar perfil NM
+    wifi priority set     prioridad de autoconnect
+    wifi autoconnect set  override manual de autoconnect
+    wifi delete           borrar perfil + filas de la DB
+    wifi password show    ver PSK (NM -> DB -> iwd)
     wifi password set     cambiar PSK y reconectar
     wifi mac set|show     clonar o ver MAC por perfil
-    wifi fallback *       alternar NM (backbone) e iwd (fallback)
-    wifi lan setup ...    crear perfil del cable (NO activar)
-    wifi lan up|down      activar/desactivar perfil LAN
-    wifi vpn up|down      conectar/desconectar Tailscale
-    wifi monitor on|off   cambiar iface a/desde modo monitor
-    wifi usb *            status/apply/edit del rename USB por MAC
-    wifi panic            reiniciar NM + reconectar antenas
+    wifi usb *            rename USB por MAC
+    wifi fallback *       alternar NM (backbone) e iwd
+    wifi ssh *            hardening SSH
+    wifi clean            limpieza de residuos
 
 Cada subcomando acepta -h/--help. El dispatcher entrega el control a
-lib/help.sh antes de tocar el lib de negocio.
-
+`lib/help_*.sh` antes de tocar el lib de negocio.
 
 ## Persistencia
 
     STATE_DIR/install.state         iface primaria/secundaria, ssh iface
     STATE_DIR/radio.state           RADIO_PRIMARY, RADIO_SECONDARY
     STATE_DIR/radio.session         SESSION_OVERRIDE (no persiste)
-    STATE_DIR/lan.state             LAN_IFACE, LAN_MODE, LAN_IP, LAN_GW
     STATE_DIR/networks.tsv          store central de redes WiFi
-    STATE_DIR/fallback.state        estado previo de NM/iwd antes de fallback_on
-    STATE_DIR/last-scan.txt         lista de SSID del ultimo scan (con comillas)
-    CONFIG_DIR/usb-names.conf       mapeos MAC -> nombre de iface USB
+    STATE_DIR/fallback.state        estado previo NM/iwd antes de fallback_on
+    STATE_DIR/last-scan.txt         lista de SSID del ultimo scan
+    CONFIG_DIR/usb-names.conf       mapeos MAC -> iface USB
     LOG_DIR/wifi-setup.log          log general
 
 ## Decisiones no obvias
 
 ### Por que NetworkManager y no iwd + dhcpcd
 
-NM resuelve nativo todo lo que el modelo anterior hacia a mano: gestion de
-multiples interfaces, perfiles por red con prioridad, DHCP por iface, MAC
-clonada, NAT (`ipv4.method shared`), IP estatica (`ipv4.method manual`).
-iwd queda instalado, parado, disabled -- fallback manual si NM falla.
-
-
-### Por que installer NO activa el cable LAN
-
-El cable LAN sirve para conectar a OTRO equipo (compartir internet o red
-directa). Si el instalador lo activara automaticamente, cambiaria la ruta
-default del equipo sin que el usuario lo pida, potencialmente rompiendo el
-acceso SSH. Con `autoconnect=off` el perfil existe pero no molesta hasta
-que el usuario hace `wifi lan up`.
-
-### Por que installer NO conecta Tailscale
-
-`tailscale up` requiere autenticacion interactiva (URL + navegador) y
-expone el nodo a la red del tailnet. Debe ser una decision explicita del
-usuario, no un efecto secundario del instalador.
+NM resuelve nativo el modelo: multiples interfaces, perfiles por red con
+prioridad, DHCP por iface, MAC clonada, IP estatica. iwd queda instalado,
+parado, disabled -- fallback manual si NM falla.
 
 ### Por que los roles de antena son solo prioridad
 
-Tener dos antenas WiFi no significa que una deba estar apagada. Ambas
-pueden estar conectadas a redes distintas simultaneamente (una a la red de
-casa, otra a un hotspot). PRIMARY/SECONDARY solo controla la prioridad
-de ruta cuando ambas tienen internet. `wifi radio down` es la unica forma
-de apagar una antena.
-
-### Por que help modular en lib/help.sh
-
-El help top-level vivia antes como heredoc dentro de bin/wifi: tocarlo
-implicaba editar el dispatcher. Ahora bin/wifi solo enruta; lib/help.sh
-concentra todo el texto y agrega `help_<sub>` por subcomando. El
-resultado: `wifi <sub> -h` funciona para cada subcomando sin tocar la
-logica, y colorear el help (por categoria) no mezcla presentacion con
-dispatch.
+Dos antenas pueden estar conectadas a redes distintas simultaneamente.
+PRIMARY/SECONDARY solo controla la prioridad de ruta cuando ambas tienen
+internet. `wifi radio down` es la unica forma de apagar una antena.
 
 ### Por que iwd hace su propio DHCP en fallback
 
-En modo backbone, NM gestiona DHCP por iface. En modo fallback, con NM
-enmascarado, no hay quien asigne IP por DHCP -- salvo iwd. La directiva
-EnableNetworkConfiguration=true en /etc/iwd/main.conf habilita el cliente
-DHCP integrado de iwd. `fallback_on` la escribe si falta, preservando el
-resto del archivo. `_fallback_wait_ip` confirma la asignacion y avisa si
-iwd no conoce la red (requiere `iwctl station <iface> connect <ssid>`).
-
-### Por que tailscale no controla DNS
-
-Tailscale, con `--accept-dns=true` (default), reescribe /etc/resolv.conf
-y pisa el symlink a stub-resolv.conf: los nombres dejan de resolver
-aunque el resto de la red funcione. El instalador corre
-`tailscale set --accept-dns=false` para que systemd-resolved siga
-siendo el dueno del DNS. Ese es el unico dueno de /etc/resolv.conf.
+Con NM enmascarado no hay quien asigne IP. `EnableNetworkConfiguration=true`
+en `/etc/iwd/main.conf` habilita el cliente DHCP integrado. `fallback_on`
+la escribe si falta. `_fallback_wait_ip` confirma la asignacion.
 
 ### Por que autoconnect lo decide el rol
 
-`autoconnect=yes` no es un campo que el usuario setea por perfil: es
-una consecuencia del rol. PRIMARY -> todos sus perfiles `yes`;
-SECONDARY -> todos `no`. Cambiar rol (`radio primary/secondary/use
---persist`) reescribe el campo. Solo `wifi autoconnect set` lo
-sobreescribe manualmente, y persiste hasta el proximo cambio de rol.
-`wifi connect <ssid>` funciona igual con `autoconnect=no`: usa
-`nmcli device connect`, que ignora `autoconnect`.
+`autoconnect=yes` es consecuencia del rol, no del perfil. PRIMARY -> `yes`;
+SECONDARY -> `no`. Cambiar rol reescribe el campo. `wifi autoconnect set`
+lo sobreescribe manualmente hasta el proximo cambio de rol.
+
+### Por que `wl` y no `brcmsmac` (BCM4313 / BCM4727)
+
+El driver open-source `brcmsmac` rompe HT en este chip. Sintomas:
+
+    - dmesg: brcmsmac brcms_ops_bss_info_changed: disassociated (repetido)
+    - dmesg: brcms_c_d11hdrs_mac80211: txop exceeded phylen 159/256 dur 1778/1504
+    - iw dev <iface> station dump: tx retries > tx packets (125-150%),
+      tx failed > 10%
+    - ping -c30 -i0.2 <gw>: 15-30% loss sostenido, rtt max 300-1000ms
+    - signal -22 a -47 dBm (antena sana, driver TX roto)
+    - iw dev <iface> scan funciona (RX OK) pero TX no llega
+
+No es antena danada: si el chip escanea 8+ APs y ve signal -22 dBm, el
+front-end RF esta sano. El rate control del driver negocia MCS 3-7 y el
+AP no recibe.
+
+Diagnostico reproducible (cualquier boot):
+
+    lspci -k -s 03:00.0 | grep "Kernel driver"
+    iw dev <iface> station dump | grep -E 'tx retries|tx failed|signal'
+    dmesg | grep -E 'brcmsmac|txop exceeded'
+
+Verificar tambien que no haya supplicant duplicado: ps -eo comm | grep
+wpa_supplicant debe estar vacio (iwd corre su propio supplicant D-Bus;
+un wpa_supplicant del boot anterior pelea la iface y produce el mismo
+sintoma).
+
+Fix (probado):
+
+    apt install -t trixie-backports linux-headers-"$(uname -r)" broadcom-sta-dkms
+
+    /etc/modprobe.d/blacklist-brcm.conf:
+        blacklist brcmsmac
+        blacklist b43
+        blacklist b43legacy
+        blacklist ssb
+        blacklist b44
+        blacklist brcm80211
+        blacklist brcmfmac
+
+    NO blacklistear bcma: es el bus PCI, sin el wl no bindea y la
+    antena desaparece en el proximo boot.
+
+    modprobe -r brcmsmac b43 b43legacy ssb b44
+    modprobe wl
+
+Resultado post-fix (medido): 0% loss, 0 retries, 0 failed, signal -28
+a -47 dBm, TX 65-72 Mbps. El chip se identifica como "Broadcom BCM4727
+802.11 Hybrid Wireless Controller 6.30.223.271" con wl, no como
+"BCM4313" con brcmsmac (lspci reportaba mal el modelo).
+
+Trade-off: broadcom-sta tiene CVEs locales (CVE-2019-9501/9502/9503),
+no remotos; requieren ejecucion previa en la maquina. Riesgo aceptable
+frente a 25% de perdida constante. wl no soporta WPA3; si el AP pasa
+a WPA3-only, la tarjeta no conecta y hay que evaluar bajar el AP a WPA2
+mixed o asumir el 25% de perdida con brcmsmac.
 
 ## Entorno y operacion
 
-Reglas de trabajo del repo (aplican a cualquier agente o humano que lo
-edite):
-
-- Editar en tx1 (Termux, celular, 1 GB RAM). `mkit`, `ut`, `nya` se
-  corren desde tx1.
-- Tests (`bash tests/run.sh`) corren en db1 (Debian, computador), no
-  en tx1. Si db1 no responde, se usa tx1 como fallback documentado.
-- Distribuir wifi-setup solo a db1. tx2 no es Debian: el tool no
-  aplica ahi.
-- Instalar siempre con `install.sh`. No hay parches manuales, symlinks
-  manuales ni `systemctl` a mano para reparar el estado.
-- Si `install.sh` falla en db1, leer
-  `~/.local/state/wifi-setup/install-*.log` y `/tmp/wifi-install.out`
-  antes de re-ejecutar.
-- `nina status` es el unico comando que lista nodos. Formato:
-  `alias ip user port kind os`. `kind` es `celular` o `computador`.
-  `nya` lo consume directamente.
-
+- Repo vive en ~/unix-toolkit-tools/wifi-setup. Funciona en cualquier
+  Debian 13+ con NetworkManager + iwd.
+- Tests: bash tests/run.sh en la misma maquina. No requieren root.
+- Instalar siempre con bash install.sh. No hay parches manuales ni
+  symlinks manuales para reparar el estado.
+- Diagnostico de un install fallido: leer
+  ~/.local/state/wifi-setup/install-*.log.
+- Antes de tocar drivers WiFi: lspci -k -s <bus>, iw dev <iface>
+  station dump, dmesg | tail -40. Confirmar si es antena (signal
+  bajo + scan vacio) o driver (signal alto + retries/failed altos).
