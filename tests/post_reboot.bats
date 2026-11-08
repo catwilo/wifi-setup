@@ -33,7 +33,8 @@ _gateway() {
     local iface
     iface="$(_wireless_iface)"
     [ -n "$iface" ] || skip "sin wireless iface"
-    run ip -4 -br addr show "$iface"
+    # ip -br no imprime la etiqueta "inet"; ip -4 addr (sin -br) si.
+    run ip -4 addr show "$iface"
     [ "$status" -eq 0 ]
     echo "$output" | grep -qE 'inet (192\.|10\.|172\.)'
 }
