@@ -69,7 +69,7 @@ profile_add() {
             ok "conectado a '${ssid}' via ${iface}"
         else
             err "no se pudo conectar a '${ssid}' (rc=${up_rc})"
-            err "revisa: wifi doctor | wifi showpass '${profile}'"
+            err "revisa: wifi status | wifi showpass '${profile}'"
         fi
     else
         info "NM no activo -- red guardada en la DB"

@@ -13,7 +13,6 @@
 #   sudo wifi fallback off     migrar a NetworkManager (con rollback)
 #   sudo wifi add              crear perfil WiFi
 #   sudo wifi ssh harden       hardening SSH
-#   sudo wifi vpn install      instalar Tailscale
 #
 # Deja:
 #   - apt: NetworkManager, iwd, iw, iproute2, curl, iputils-ping,
@@ -51,7 +50,6 @@ Despues del install:
   sudo wifi fallback off     migrar a NetworkManager (con rollback)
   sudo wifi add              crear perfil WiFi
   sudo wifi ssh harden       hardening SSH
-  sudo wifi vpn install      instalar Tailscale
 
 Requisitos: Debian 13+, TTY, conexion a internet.
 HELP
@@ -181,5 +179,4 @@ info "  sudo wifi clean          limpia residuos de instalaciones canceladas"
 info "  sudo wifi fallback off   migrar a NetworkManager (con rollback)"
 info "  sudo wifi add            crear perfil WiFi"
 info "  sudo wifi ssh harden     hardening SSH"
-info "  sudo wifi vpn install    instalar Tailscale"
 echo "" >&2

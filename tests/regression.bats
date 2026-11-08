@@ -27,28 +27,28 @@ setup() { setup_env; }
 }
 
 @test "_cmd_connect: usa nm_device_connect, no nm_con_up" {
-    run grep -A40 '^_cmd_connect()' "$REPO/bin/wifi"
+    run grep -A40 '^_cmd_connect()' "$REPO/lib/cli_commands.sh"
     [ "$status" -eq 0 ]
     [[ "$output" == *'nm_device_connect'* ]]
     [[ "$output" != *'nm_con_up'* ]]
 }
 
 @test "radio_up: usa nm_device_connect, no nm_con_up" {
-    run grep -A40 '^radio_up()' "$REPO/lib/radio.sh"
+    run grep -A40 '^radio_up()' "$REPO/lib/radio_ops.sh"
     [ "$status" -eq 0 ]
     [[ "$output" == *'nm_device_connect'* ]]
     [[ "$output" != *'nm_con_up'* ]]
 }
 
 @test "radio_boot: usa nm_device_connect, no nm_con_up" {
-    run grep -A80 '^radio_boot()' "$REPO/lib/radio.sh"
+    run grep -A80 '^radio_boot()' "$REPO/lib/radio_ops.sh"
     [ "$status" -eq 0 ]
     [[ "$output" == *'nm_device_connect'* ]]
     [[ "$output" != *'nm_con_up'* ]]
 }
 
 @test "fallback_off: non-zero sin IP y preserva fallback_state" {
-    run grep -A120 '^fallback_off()' "$REPO/lib/fallback.sh"
+    run grep -A120 '^fallback_off()' "$REPO/lib/fallback_ops.sh"
     [ "$status" -eq 0 ]
     [[ "$output" == *'ninguna antena obtuvo IP'* ]]
     [[ "$output" == *'fallback_state preservado'* ]]
@@ -64,7 +64,7 @@ setup() { setup_env; }
 }
 
 @test "DNS: fallback.sh delega a systemd (NameResolvingService=systemd, no none)" {
-    run grep 'NameResolvingService' "$REPO/lib/fallback.sh"
+    run grep 'NameResolvingService' "$REPO/lib/fallback_state.sh"
     [ "$status" -eq 0 ]
     [[ "$output" == *'systemd'* ]]
     [[ "$output" != *'NameResolvingService=none'* ]]
@@ -93,7 +93,7 @@ _extract_netconf_python() {
         /<<.PY_IWD_CONF.$/ { p=1; next }
         /^PY_IWD_CONF$/ { exit }
         p { print }
-    ' "$REPO/lib/fallback.sh" > "$out"
+    ' "$REPO/lib/fallback_state.sh" > "$out"
     [ -s "$out" ]
 }
 
@@ -131,7 +131,7 @@ EOF
 }
 
 @test "fallback_on: llama _fallback_fix_routes tras esperar IP (bug brcmsmac)" {
-    run grep -A120 '^fallback_on\(\)' "$REPO/lib/fallback.sh"
+    run grep -A120 '^fallback_on\(\)' "$REPO/lib/fallback_ops.sh"
     [ "$status" -eq 0 ]
     [[ "$output" == *'_fallback_fix_routes'* ]]
 }

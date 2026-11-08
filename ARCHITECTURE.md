@@ -140,7 +140,6 @@ NO conecta Tailscale (eso es `wifi vpn up`).
     wifi vpn up|down      conectar/desconectar Tailscale
     wifi monitor on|off   cambiar iface a/desde modo monitor
     wifi usb *            status/apply/edit del rename USB por MAC
-    wifi doctor [--fix]   diagnostico + auto-fix
     wifi panic            reiniciar NM + reconectar antenas
 
 Cada subcomando acepta -h/--help. El dispatcher entrega el control a

@@ -20,7 +20,6 @@ Verifica que el stack wifi-setup este operativo:
   · Al menos una antena conectada con IP
   · Conectividad a internet + DNS
   · SSH escuchando en :22
-  · Tailscale instalado (daemon activo)
   · iwd parado (fallback manual)
 HELP
     exit 0
@@ -172,43 +171,6 @@ if command -v iwctl >/dev/null 2>&1; then
     fi
 else
     _warn "iwd no instalado -- no habra fallback si NM falla"
-fi
-
-# ---------------------------------------------------------------------------
-# Tailscale
-# ---------------------------------------------------------------------------
-section "Tailscale"
-if command -v tailscale >/dev/null 2>&1; then
-    _pass "tailscale instalado"
-    if systemctl is-active tailscaled >/dev/null 2>&1; then
-        _pass "tailscaled activo"
-    else
-        _warn "tailscaled inactivo"
-    fi
-    if tailscale status >/dev/null 2>&1; then
-        _pass "tailscale conectado"
-    else
-        _warn "tailscale down (activa con: wifi vpn up)"
-    fi
-else
-    _warn "tailscale no instalado"
-fi
-
-# ---------------------------------------------------------------------------
-# LAN (opcional, solo reporta)
-# ---------------------------------------------------------------------------
-section "LAN"
-if [[ -f "${STATE_DIR}/lan.state" ]]; then
-    # shellcheck source=/dev/null
-    source "${STATE_DIR}/lan.state"
-    _pass "perfil LAN configurado (mode=${LAN_MODE:-—})"
-    if nm_dev_ethernet_list | awk -F: -v i="${LAN_IFACE}" '$1==i && $3=="connected"{exit 0} END{exit 1}'; then
-        _pass "cable LAN activo en ${LAN_IFACE}"
-    else
-        _warn "cable LAN inactivo (activa con: wifi lan up)"
-    fi
-else
-    _warn "LAN no configurado (opcional -- usa: wifi lan setup)"
 fi
 
 # ---------------------------------------------------------------------------
