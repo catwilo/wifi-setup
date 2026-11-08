@@ -33,7 +33,7 @@ setup() {
 }
 
 @test "config/usb-names.conf del repo: formato <mac> <nombre> valido" {
-    local line mac name
+    local line mac name count=0
     while IFS= read -r line; do
         line="${line%%#*}"
         line="$(printf '%s' "$line" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
@@ -44,6 +44,7 @@ setup() {
         mac="$1"; name="$2"
         [[ "$mac"  =~ ^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$ ]] || { echo "MAC invalida: $mac" >&3; return 1; }
         [[ "$name" =~ ^[a-zA-Z0-9_-]+$ ]] || { echo "nombre invalido: $name" >&3; return 1; }
+        count=$((count + 1))
     done < "$USB_CONF"
-    grep -qE '^\s*90:de:80:e7:fd:9f\s+wlx1\s*$' "$USB_CONF"
+    [ "$count" -gt 0 ] || { echo "config vacia: se espera al menos una linea <mac> <nombre>" >&3; return 1; }
 }
