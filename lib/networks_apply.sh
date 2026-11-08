@@ -9,12 +9,14 @@ networks_sync() {
         return 1
     fi
 
-    local line ssid psk iface auto prio _ts
+    local line ssid psk iface auto prio
     local applied=0 skipped=0
     local -a applied_names=()
 
     while IFS= read -r line; do
-        IFS=$'\t' read -r ssid psk iface auto prio _ts <<< "${line}"
+        _networks_row "$line"
+        ssid="${_N_SSID}"; psk="${_N_PSK}"; iface="${_N_IFACE}"
+        auto="${_N_AUTO}"; prio="${_N_PRIO}"
         [[ -n "${ssid}" && -n "${iface}" ]] || continue
         [[ "${auto}" == "yes" || "${auto}" == "no" ]] || auto="no"
 
@@ -91,15 +93,15 @@ _iwd_store_write() {
 networks_apply_to_iwd() {
     [[ -d "${IWD_DIR}" ]] || return 0
     [[ -f "${NETWORKS_STORE}" ]] || return 0
-    declare -A seen=()
-    local line ssid psk _if _auto _prio _ts
-    local applied=0
+    # _networks_row preserva psk vacio sin correr los campos siguientes.
+    local line applied=0
+    local -A seen=()
     while IFS= read -r line; do
-        IFS=$'\t' read -r ssid psk _if _auto _prio _ts <<< "${line}"
-        [[ -n "${ssid}" && -n "${psk}" ]] || continue
-        [[ -n "${seen[${ssid}]:-}" ]] && continue
-        seen["${ssid}"]=1
-        _iwd_store_write "${ssid}" "${psk}" && applied=$((applied + 1))
+        _networks_row "$line"
+        [[ -n "${_N_SSID}" && -n "${_N_PSK}" ]] || continue
+        [[ -n "${seen[${_N_SSID}]:-}" ]] && continue
+        seen["${_N_SSID}"]=1
+        _iwd_store_write "${_N_SSID}" "${_N_PSK}" && applied=$((applied + 1))
     done < <(_networks_store_rows)
     [[ "${applied}" -gt 0 ]] && info "iwd: ${applied} red(es) propagadas desde la DB"
     return 0

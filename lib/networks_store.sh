@@ -53,12 +53,29 @@ _networks_store_rows() {
 }
 
 # _networks_psk_for_ssid <ssid> -- busca la PSK del SSID en el store.
+# _networks_row <line> -- lee 6 campos TSV en _N_SSID _N_PSK _N_IFACE
+# _N_AUTO _N_PRIO _N_TS. Usa mapfile con -d $'\t' en vez de IFS=$'\t'
+# read: tab es IFS-whitespace y colapsa tabs consecutivos, asi que un
+# psk vacio en el TSV corre los campos siguientes (psk termina siendo la
+# iface, iface la auto, etc.). mapfile con delimitador literal preserva
+# los campos vacios.
+_networks_row() {
+    local -a _f=()
+    mapfile -d $'\t' -t _f < <(printf '%s' "$1")
+    _N_SSID="${_f[0]:-}"
+    _N_PSK="${_f[1]:-}"
+    _N_IFACE="${_f[2]:-}"
+    _N_AUTO="${_f[3]:-}"
+    _N_PRIO="${_f[4]:-}"
+    _N_TS="${_f[5]:-}"
+}
+
 _networks_psk_for_ssid() {
-    local ssid="$1" line _ssid _psk _rest
+    local ssid="$1" line
     while IFS= read -r line; do
-        IFS=$'\t' read -r _ssid _psk _rest <<< "${line}"
-        if [[ "${_ssid}" == "${ssid}" && -n "${_psk}" ]]; then
-            echo "${_psk}"
+        _networks_row "$line"
+        if [[ "${_N_SSID}" == "${ssid}" && -n "${_N_PSK}" ]]; then
+            echo "${_N_PSK}"
             return 0
         fi
     done < <(_networks_store_rows)

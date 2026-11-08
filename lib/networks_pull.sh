@@ -43,12 +43,12 @@ networks_pull_nm() {
     #    para preservar valores existentes.
     declare -A old_auto=()
     declare -A old_prio=()
-    local line _ssid _psk _iface _auto _prio
+    local line
     while IFS= read -r line; do
-        IFS=$'\t' read -r _ssid _psk _iface _auto _prio _rest <<< "${line}"
-        [[ -n "${_ssid}" && -n "${_iface}" ]] || continue
-        old_auto["${_ssid}|${_iface}"]="${_auto}"
-        old_prio["${_ssid}|${_iface}"]="${_prio}"
+        _networks_row "$line"
+        [[ -n "${_N_SSID}" && -n "${_N_IFACE}" ]] || continue
+        old_auto["${_N_SSID}|${_N_IFACE}"]="${_N_AUTO}"
+        old_prio["${_N_SSID}|${_N_IFACE}"]="${_N_PRIO}"
     done < <(_networks_store_rows)
 
     # 3. Agrupar por SSID. PSK: la mas reciente en el archivo NM gana.
@@ -58,16 +58,16 @@ networks_pull_nm() {
     declare -A ssid_iface_prio=()
     declare -A ssid_seen=()
 
-    while IFS=$'\t' read -r ssid psk iface auto prio; do
-        [[ -n "${ssid}" && -n "${iface}" ]] || continue
-        # PSK: la primera no-vacia que aparezca gana (los perfiles se leen
-        # en orden estable; el ultimo que escriba es el mas reciente).
-        if [[ -n "${psk}" ]]; then
-            ssid_psk["${ssid}"]="${psk}"
+    local _line
+    while IFS= read -r _line; do
+        _networks_row "$_line"
+        [[ -n "${_N_SSID}" && -n "${_N_IFACE}" ]] || continue
+        if [[ -n "${_N_PSK}" ]]; then
+            ssid_psk["${_N_SSID}"]="${_N_PSK}"
         fi
-        ssid_iface_auto["${ssid}|${iface}"]="${auto}"
-        ssid_iface_prio["${ssid}|${iface}"]="${prio}"
-        ssid_seen["${ssid}"]=1
+        ssid_iface_auto["${_N_SSID}|${_N_IFACE}"]="${_N_AUTO}"
+        ssid_iface_prio["${_N_SSID}|${_N_IFACE}"]="${_N_PRIO}"
+        ssid_seen["${_N_SSID}"]=1
     done < "${tmp_nm}"
 
     # 4. Todas las ifaces WiFi presentes en el sistema.

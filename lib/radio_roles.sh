@@ -282,12 +282,12 @@ _radio_db_set_autoconnect() {
     [[ -f "${NETWORKS_STORE}" ]] || return 0
     local tmp; tmp="$(mktemp "${TMPDIR:-/tmp}/wifi-tsv.XXXXXX")"
     grep '^#' "${NETWORKS_STORE}" > "${tmp}" || true
-    local _s _p _i _a _pr _ts _changed=0
+    local _changed=0
     while IFS= read -r _line; do
-        IFS=$'\t' read -r _s _p _i _a _pr _ts <<< "${_line}"
-        if [[ "${_s}" == "${ssid}" && "${_i}" == "${iface}" ]]; then
+        _networks_row "$_line"
+        if [[ "${_N_SSID}" == "${ssid}" && "${_N_IFACE}" == "${iface}" ]]; then
             printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
-                "${_s}" "${_p}" "${_i}" "${mode}" "${_pr}" "$(date +%s)" >> "${tmp}"
+                "${_N_SSID}" "${_N_PSK}" "${_N_IFACE}" "${mode}" "${_N_PRIO}" "$(date +%s)" >> "${tmp}"
             _changed=1
         else
             printf '%s\n' "${_line}" >> "${tmp}"

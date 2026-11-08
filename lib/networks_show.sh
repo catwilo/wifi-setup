@@ -32,24 +32,24 @@ networks_list() {
 
     # Construir filas con clave de ordenamiento (padded para numericos).
     local -a _rows=()
-    local line ssid psk iface auto prio _ts profile
+    local line profile
     local nm_ok iwd_ok key formatted
     while IFS= read -r line; do
-        IFS=$'\t' read -r ssid psk iface auto prio _ts <<< "${line}"
-        [[ -n "${ssid}" && -n "${iface}" ]] || continue
-        profile="wifi-${iface}-${ssid}"
+        _networks_row "$line"
+        [[ -n "${_N_SSID}" && -n "${_N_IFACE}" ]] || continue
+        profile="wifi-${_N_IFACE}-${_N_SSID}"
         if nm_con_exists "${profile}" 2>/dev/null; then nm_ok="si"; else nm_ok="NO"; fi
-        if [[ -r "${IWD_DIR}/${ssid}.psk" ]]; then iwd_ok="si"; else iwd_ok="NO"; fi
+        if [[ -r "${IWD_DIR}/${_N_SSID}.psk" ]]; then iwd_ok="si"; else iwd_ok="NO"; fi
         case "${sort_col}" in
-            ssid)  key="${ssid}" ;;
-            iface) key="${iface}" ;;
-            auto)  key="${auto}" ;;
-            prio)  key="$(printf '%010d' "${prio}")" ;;
+            ssid)  key="${_N_SSID}" ;;
+            iface) key="${_N_IFACE}" ;;
+            auto)  key="${_N_AUTO}" ;;
+            prio)  key="$(printf '%010d' "${_N_PRIO}")" ;;
             nm)    key="${nm_ok}" ;;
             iwd)   key="${iwd_ok}" ;;
         esac
         formatted="$(printf '%-24s %-10s %-6s %-6s %-6s %-6s' \
-            "${ssid}" "${iface}" "${auto}" "${prio}" "${nm_ok}" "${iwd_ok}")"
+            "${_N_SSID}" "${_N_IFACE}" "${_N_AUTO}" "${_N_PRIO}" "${nm_ok}" "${iwd_ok}")"
         _rows+=("${key}"$'\t'"${formatted}")
     done < <(_networks_store_rows)
 
@@ -89,15 +89,15 @@ networks_show() {
     local ssid="$1"
     [[ -f "${NETWORKS_STORE}" ]] || { warn "DB vacia -- corre: wifi networks merge"; return 1; }
 
-    local line _s _p _i _a _pr _ts
+    local line
     local psk="" found=0
     local -a rows=()
     while IFS= read -r line; do
-        IFS=$'\t' read -r _s _p _i _a _pr _ts <<< "${line}"
-        [[ "${_s}" == "${ssid}" ]] || continue
+        _networks_row "$line"
+        [[ "${_N_SSID}" == "${ssid}" ]] || continue
         found=1
-        [[ -n "${psk}" ]] || psk="${_p}"
-        rows+=("${_i}"$'\t'"${_a}"$'\t'"${_pr}")
+        [[ -n "${psk}" ]] || psk="${_N_PSK}"
+        rows+=("${_N_IFACE}"$'\t'"${_N_AUTO}"$'\t'"${_N_PRIO}")
     done < <(_networks_store_rows)
 
     if [[ "${found}" -eq 0 ]]; then
@@ -180,15 +180,15 @@ networks_cleanup() {
     local tmp; tmp="$(mktemp "${TMPDIR:-/tmp}/wifi-tsv.XXXXXX")"
     grep '^#' "${NETWORKS_STORE}" > "${tmp}" || true
 
-    local line _s _p _i _a _pr _ts
+    local line
     local kept=0 dropped=0
     local -a drop_list=()
     while IFS= read -r line; do
-        IFS=$'\t' read -r _s _p _i _a _pr _ts <<< "${line}"
-        [[ -n "${_s}" && -n "${_i}" ]] || continue
+        _networks_row "$line"
+        [[ -n "${_N_SSID}" && -n "${_N_IFACE}" ]] || continue
         local has_nm=0 has_iwd=0
-        if nm_con_exists "wifi-${_i}-${_s}" 2>/dev/null; then has_nm=1; fi
-        if [[ -r "${IWD_DIR}/${_s}.psk" ]]; then has_iwd=1; fi
+        if nm_con_exists "wifi-${_N_IFACE}-${_N_SSID}" 2>/dev/null; then has_nm=1; fi
+        if [[ -r "${IWD_DIR}/${_N_SSID}.psk" ]]; then has_iwd=1; fi
 
         # Conservador: una fila se elimina solo si el SSID no existe en
         # NINGUN backend (ni perfil NM ni .psk en iwd). Filas de una
@@ -198,7 +198,7 @@ networks_cleanup() {
             printf '%s\n' "${line}" >> "${tmp}"
             kept=$((kept + 1))
         else
-            drop_list+=("${_s} (${_i})")
+            drop_list+=("${_N_SSID} (${_N_IFACE})")
             dropped=$((dropped + 1))
         fi
     done < <(_networks_store_rows)
