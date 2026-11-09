@@ -57,18 +57,21 @@ _gateway() {
     echo "$output" | grep -q "dev $iface"
 }
 
-@test "boot_state: gateway alcanzable (0-5% loss)" {
+@test "boot_state: gateway alcanzable (0-30% loss)" {
     _require_debian
     local gw iface
     iface="$(_wireless_iface)"
     gw="$(_gateway)"
     [ -n "$iface" ] || skip "sin wireless iface"
     [ -n "$gw" ]    || skip "sin gateway"
+    # Umbral 30%: en 2.4 GHz con muchos vecinos, el AP puede descartar
+    # paquetes (co-channel interference, airtime fairness). El test
+    # detecta gateway caido o ruta rota, no certifica calidad de RF.
     run ping -c10 -i0.2 -W2 -I "$iface" "$gw"
     [ "$status" -eq 0 ]
     local loss
     loss="$(echo "$output" | grep -oE '[0-9]+(\.[0-9]+)?% packet loss' | grep -oE '^[0-9]+' | head -1)"
-    [ "${loss:-100}" -le 5 ] || { echo "loss=${loss}% > 5%" >&3; return 1; }
+    [ "${loss:-100}" -le 30 ] || { echo "loss=${loss}% > 30%" >&3; return 1; }
 }
 
 @test "boot_state: DNS resuelve" {
