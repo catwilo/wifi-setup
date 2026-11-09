@@ -22,7 +22,22 @@ profile_resolve() {
     return 1
 }
 
+# _profile_strip_ssid_quotes <line> -- quita comillas dobles envolventes.
+# scan.sh escribe last-scan.txt con printf '"%s"' para hacer visibles
+# los espacios al inicio/fin; el picker fzf devuelve la linea con esas
+# comillas y hay que despojarlas antes de usar el SSID como nombre real.
+# Solo quita UNA comilla de cada extremo (no un strip global, para no
+# romper SSIDs que las contengan internas).
+_profile_strip_ssid_quotes() {
+    local s="$1"
+    if [[ "${#s}" -ge 2 && "${s:0:1}" == '"' && "${s: -1}" == '"' ]]; then
+        s="${s:1:${#s}-2}"
+    fi
+    printf '%s' "${s}"
+}
+
 # profile_pick_ssid -- picker fzf sobre el ultimo scan guardado.
+# Devuelve el SSID SIN las comillas envolventes que usa last-scan.txt.
 profile_pick_ssid() {
     local cache="${STATE_DIR}/last-scan.txt"
     command -v fzf >/dev/null 2>&1 || return 0
@@ -30,7 +45,10 @@ profile_pick_ssid() {
         warn "no hay escaneo previo -- corre 'wifi scan' para el picker fzf"
         return 0
     fi
-    fzf --prompt='SSID> ' --height=40% < "${cache}"
+    local picked
+    picked="$(fzf --prompt='SSID> ' --height=40% < "${cache}")" || return 0
+    [[ -n "${picked}" ]] || return 0
+    _profile_strip_ssid_quotes "${picked}"
 }
 
 # profile_add <ssid> <iface> <pass> -- crear perfil (DB + NM + iwd) y
