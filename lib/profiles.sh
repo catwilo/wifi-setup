@@ -10,10 +10,15 @@ profile_resolve() {
         printf '%s\n' "${arg}"
         return 0
     fi
+    # Tolerante a comillas: un perfil creado con '"Familia_Mora"' (bug de
+    # picker pre-878ded0) se puede referenciar como 'Familia_Mora' para
+    # que wifi delete/showpass/etc. lo limpien sin intervencion manual.
+    local arg_stripped; arg_stripped="$(_profile_strip_ssid_quotes "${arg}")"
     while IFS= read -r name; do
         [[ -n "${name}" ]] || continue
         ssid="$(nmcli -t -g 802-11-wireless.ssid con show "${name}" 2>/dev/null || true)"
-        if [[ "${ssid}" == "${arg}" ]]; then
+        if [[ "${ssid}" == "${arg}" ]] \
+           || [[ "$(_profile_strip_ssid_quotes "${ssid}")" == "${arg_stripped}" ]]; then
             printf '%s\n' "${name}"
             return 0
         fi

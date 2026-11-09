@@ -169,6 +169,35 @@ setup() {
     [ "$output" = "0" ]
 }
 
+@test "profile_resolve: perfil con comillas literales se encuentra por SSID limpio" {
+    # Perfil creado con el bug pre-878ded0: nombre incluye comillas.
+    printf 'wifi-wlan0-"Familia_Mora"\n' > "$PROFILES"
+    printf '"Familia_Mora"\n' > "${PROFILES_DIR}/wifi-wlan0-\"Familia_Mora\".802-11-wireless.ssid"
+
+    run profile_resolve "Familia_Mora"
+    [ "$status" -eq 0 ]
+    [ "$output" = 'wifi-wlan0-"Familia_Mora"' ]
+}
+
+@test "profile_resolve: SSID legitimo con comillas matchea si arg tambien las trae" {
+    # Caso raro: AP con comillas reales, arg con comillas. Comportamiento previo
+    # al fix (crudo contra crudo) sigue funcionando.
+    printf 'wifi-wlan0-"Real"\n' > "$PROFILES"
+    printf '"Real"\n' > "${PROFILES_DIR}/wifi-wlan0-\"Real\".802-11-wireless.ssid"
+
+    run profile_resolve '"Real"'
+    [ "$status" -eq 0 ]
+    [ "$output" = 'wifi-wlan0-"Real"' ]
+}
+
+@test "profile_resolve: SSID diferente no matchea aunque strip coincida parcialmente" {
+    printf 'wifi-wlan0-Otra\n' > "$PROFILES"
+    printf 'Otra\n' > "${PROFILES_DIR}/wifi-wlan0-Otra.802-11-wireless.ssid"
+
+    run profile_resolve "Familia_Mora"
+    [ "$status" -ne 0 ]
+}
+
 @test "profile_rename: rechaza si el nuevo nombre ya existe" {
     printf 'wifi-wlan0-RedA\nwifi-wlan0-RedB\n' > "$PROFILES"
     run profile_rename "wifi-wlan0-RedA" "wifi-wlan0-RedB"
